@@ -1,7 +1,9 @@
-package e_domain
+package c_interface_test
 
 import (
+	"encoding/json"
 	"fmt"
+	c_interface "github.com/reuben-baek/go-learning/c-interface"
 	"reflect"
 	"testing"
 )
@@ -26,13 +28,18 @@ func TestStructReflection(t *testing.T) {
 }
 
 func TestInterfaceReflection(t *testing.T) {
-	type Box interface {
-		X() int
-		Y() int
+	user := c_interface.UserInstance(1, "reuben")
+
+	s := reflect.TypeOf(user)
+	for i := 0; i < s.NumMethod(); i++ {
+		f := s.Method(i)
+		fmt.Printf("%d: %+v\n", i, f)
 	}
+}
 
-	var box Box
+func TestJsonMarshalReflection(t *testing.T) {
+	user := c_interface.UserInstance(1, "reuben")
 
-	ref := reflect.TypeOf(box)
-	fmt.Printf("%+v\n", ref)
+	bytes, _ := json.Marshal(user)
+	fmt.Printf("%s\n", bytes)
 }

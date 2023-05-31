@@ -77,3 +77,11 @@ func (f *flavorEntity) ID() string {
 func (f *flavorEntity) Name() string {
 	return f.name
 }
+
+type ServerRepository interface {
+	Repository[Server, string]
+}
+
+type FlavorRepository interface {
+	Repository[Flavor, string]
+}
