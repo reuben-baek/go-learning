@@ -2,6 +2,7 @@ package f_repository_impl
 
 import (
 	"github.com/stretchr/testify/assert"
+	"gorm.io/gorm"
 	"testing"
 )
 
@@ -65,4 +66,58 @@ func TestFindID(t *testing.T) {
 			findID[TT, int](reuben)
 		})
 	})
+}
+
+func TestFindPreloadModels(t *testing.T) {
+	type Company struct {
+		ID   int
+		Name string
+	}
+	type Role struct {
+		ID   int
+		Name string
+	}
+	type Order struct {
+		ID   int
+		Name string
+	}
+	type User struct {
+		gorm.Model
+		Name      string
+		CompanyID uint
+		Company   Company `fetch:"eager"`
+		Role      Role
+		Orders    []Order `fetch:"eager"`
+	}
+
+	models := findPreloadModels[User](User{})
+	expected := []string{"Company", "Orders"}
+	assert.Equal(t, expected, models)
+}
+
+func TestFindAssociations(t *testing.T) {
+	type Order struct {
+		ID   int
+		Name string
+	}
+	type User struct {
+		gorm.Model
+		Name   string
+		Orders []Order `fetch:"eager"`
+	}
+
+	user := User{
+		Model: gorm.Model{
+			ID: 1,
+		},
+		Name: "reuben",
+		Orders: []Order{
+			{
+				ID:   1,
+				Name: "order-1",
+			},
+		},
+	}
+	associations := findAssociations[User](user)
+	assert.Equal(t, 1, len(associations))
 }
