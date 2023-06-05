@@ -16,19 +16,19 @@ type LazyLoadable interface {
 	LoadNow(entity any) (any, error)
 }
 
-type LazyLoadableImpl struct {
+type LazyLoader struct {
 	loaderMap map[string]func() (any, error)
 }
 
-func (l *LazyLoadableImpl) NewInstance() {
+func (l *LazyLoader) NewInstance() {
 	l.loaderMap = make(map[string]func() (any, error))
 }
 
-func (l *LazyLoadableImpl) SetLazyLoadFunc(entity string, fn func() (any, error)) {
+func (l *LazyLoader) SetLazyLoadFunc(entity string, fn func() (any, error)) {
 	l.loaderMap[entity] = fn
 }
 
-func (l *LazyLoadableImpl) LoadNow(entity any) (any, error) {
+func (l *LazyLoader) LoadNow(entity any) (any, error) {
 	typeOf := reflect.TypeOf(entity)
 	if fn, ok := l.loaderMap[typeOf.Name()]; ok {
 		return fn()

@@ -27,12 +27,12 @@ func (c Company) To() e_domain.Company {
 }
 
 type Product struct {
-	f_repository_impl.LazyLoadableImpl `gorm:"-"`
-	ID                                 uint   `gorm:"primaryKey;column:id"`
-	Name                               string `gorm:"column:name"`
-	Weight                             uint   `gorm:"column:weight"`
-	CompanyID                          uint
-	Company                            Company `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	f_repository_impl.LazyLoader `gorm:"-"`
+	ID                           uint   `gorm:"primaryKey;column:id"`
+	Name                         string `gorm:"column:name"`
+	Weight                       uint   `gorm:"column:weight"`
+	CompanyID                    uint
+	Company                      Company `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 }
 
 func (p Product) To() e_domain.Product {

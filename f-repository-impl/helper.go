@@ -107,7 +107,7 @@ func findAssociations[T any](entity T) []Association {
 		field := valueOf.Field(i)
 		if field.Type().Kind() == reflect.Struct {
 			fieldType := field.Type().String()
-			if fieldType != "gorm.Model" && fieldType != "f_repository_impl.LazyLoadableImpl" && fieldType != "f_repository_impl.LazyLoad" {
+			if fieldType != "gorm.Model" && fieldType != "f_repository_impl.LazyLoader" {
 				fieldTypeName := field.Type().Name()
 				logrus.Debugf("field: Name=%s, Type=%s, Value=%+v", fieldTypeName, fieldType, field.Interface())
 

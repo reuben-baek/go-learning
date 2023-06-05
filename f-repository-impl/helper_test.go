@@ -134,7 +134,7 @@ func TestFindLazyEntity(t *testing.T) {
 		Name string
 	}
 	type User struct {
-		LazyLoadableImpl `gorm:"-"`
+		LazyLoader `gorm:"-"`
 		gorm.Model
 		ID        int
 		Name      string

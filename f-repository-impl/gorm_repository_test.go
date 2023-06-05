@@ -76,13 +76,13 @@ func LazyLoadableInstance(entity f_repository_impl.LazyLoadable) {
 
 func TestLazyLoadable(t *testing.T) {
 	type User struct {
-		f_repository_impl.LazyLoadableImpl `gorm:"-"`
-		Name                               string
-		CompanyID                          int
+		f_repository_impl.LazyLoader `gorm:"-"`
+		Name                         string
+		CompanyID                    int
 	}
 	user := User{}
 	LazyLoadableInstance(&user)
-	assert.NotNil(t, user.LazyLoadableImpl)
+	assert.NotNil(t, user.LazyLoader)
 
 }
 
@@ -92,7 +92,7 @@ func TestGormRepository_GetLazyLoadFn(t *testing.T) {
 		Name string
 	}
 	type LazyUser struct {
-		f_repository_impl.LazyLoadableImpl `gorm:"-"`
+		f_repository_impl.LazyLoader `gorm:"-"`
 		gorm.Model
 		Name        string
 		CompanyID   int
@@ -127,7 +127,7 @@ func TestGormRepositoryAssociations_LazyLoad(t *testing.T) {
 		Name string
 	}
 	type LazyUser struct {
-		f_repository_impl.LazyLoadableImpl `gorm:"-"`
+		f_repository_impl.LazyLoader `gorm:"-"`
 		gorm.Model
 		Name      string
 		CompanyID int
