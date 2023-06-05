@@ -3,6 +3,7 @@ package f_repository_impl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -10,19 +11,38 @@ import (
 )
 
 type LazyLoadable interface {
-	SetLazyLoadFactory(entity string, fn func() (any, error))
 	NewInstance()
+	SetLazyLoadFunc(entity string, fn func() (any, error))
+	LoadNow(entity any) (any, error)
 }
 
 type LazyLoadableImpl struct {
-	Factories map[string]func() (any, error)
+	loaderMap map[string]func() (any, error)
 }
 
-func (l *LazyLoadableImpl) SetLazyLoadFactory(entity string, fn func() (any, error)) {
-	l.Factories[entity] = fn
-}
 func (l *LazyLoadableImpl) NewInstance() {
-	l.Factories = make(map[string]func() (any, error))
+	l.loaderMap = make(map[string]func() (any, error))
+}
+
+func (l *LazyLoadableImpl) SetLazyLoadFunc(entity string, fn func() (any, error)) {
+	l.loaderMap[entity] = fn
+}
+
+func (l *LazyLoadableImpl) LoadNow(entity any) (any, error) {
+	typeOf := reflect.TypeOf(entity)
+	if fn, ok := l.loaderMap[typeOf.Name()]; ok {
+		return fn()
+	} else {
+		panic(fmt.Sprintf("lazy load funtion for %s is not set", typeOf))
+	}
+}
+
+func LazyLoadNow[T any](lazyLoader LazyLoadable) (T, error) {
+	var entity T
+	var err error
+	var loaded any
+	loaded, err = lazyLoader.LoadNow(entity)
+	return loaded.(T), err
 }
 
 type GormRepository[T any, ID comparable] struct {
@@ -59,7 +79,7 @@ func (u *GormRepository[T, ID]) FindOne(ctx context.Context, id ID) (T, error) {
 		anyEntity.NewInstance()
 		for _, v := range associations {
 			if v.FetchMode == FetchLazyMode {
-				anyEntity.SetLazyLoadFactory(v.Name, u.GetLazyLoadFn(ctx, v.Value, v.ID))
+				anyEntity.SetLazyLoadFunc(v.Name, u.GetLazyLoadFunc(ctx, v.Value, v.ID))
 			}
 		}
 	}
@@ -129,7 +149,7 @@ func (u *GormRepository[T, ID]) Delete(ctx context.Context, entity T) error {
 	return nil
 }
 
-func (u *GormRepository[T, ID]) GetLazyLoadFn(ctx context.Context, entity any, id any) func() (any, error) {
+func (u *GormRepository[T, ID]) GetLazyLoadFunc(ctx context.Context, entity any, id any) func() (any, error) {
 	logrus.Infof("entity: %+v id: %v", entity, id)
 	return func() (any, error) {
 		if err := u.db.Model(entity).First(entity, "id = ?", id).Error; err != nil {

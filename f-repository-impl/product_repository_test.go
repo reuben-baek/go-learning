@@ -41,8 +41,11 @@ func (p Product) To() e_domain.Product {
 		Name:   p.Name,
 		Weight: p.Weight,
 		Company: e_domain.LazyLoadFn[e_domain.Company](func() (any, error) {
-			company, _ := p.Factories["Company"]()
-			return company.(Company).To(), nil
+			if company, err := f_repository_impl.LazyLoadNow[Company](&p); err != nil {
+				return nil, err
+			} else {
+				return company.To(), nil
+			}
 		}),
 	}
 }

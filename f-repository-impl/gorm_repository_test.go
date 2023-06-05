@@ -115,7 +115,7 @@ func TestGormRepository_GetLazyLoadFn(t *testing.T) {
 	assert.NotEmpty(t, kakaoEnterpriseCreated.ID)
 
 	company := &Company{}
-	loadFn := userRepository.GetLazyLoadFn(ctx, company, int(1))
+	loadFn := userRepository.GetLazyLoadFunc(ctx, company, int(1))
 
 	loadedCompany, _ := loadFn()
 	assert.Equal(t, 1, loadedCompany.(Company).ID)
@@ -165,7 +165,7 @@ func TestGormRepositoryAssociations_LazyLoad(t *testing.T) {
 		assert.Equal(t, created.CompanyID, found.CompanyID)
 		assert.Empty(t, found.Company)
 
-		company, err := found.Factories["Company"]()
+		company, err := f_repository_impl.LazyLoadNow[Company](&found)
 		assert.Nil(t, err)
 		assert.Equal(t, kakaoEnterpriseCreated, company)
 	})
