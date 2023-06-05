@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
+	"strings"
 )
 
 type LazyLoadable interface {
@@ -53,6 +54,51 @@ func NewGormRepository[T any, ID comparable](db *gorm.DB) *GormRepository[T, ID]
 	return &GormRepository[T, ID]{db: db}
 }
 
+func (u *GormRepository[T, ID]) FindBy(ctx context.Context, belongTo any) ([]T, error) {
+	var entity T
+	var entities []T
+	associations := findAssociations[T](entity)
+
+	db := u.db.Model(&entity)
+	for _, v := range associations {
+		if v.FetchMode == FetchEagerMode {
+			db = db.Preload(v.Name)
+		}
+	}
+
+	belongToTable := reflect.TypeOf(belongTo).Name()
+	var foreignKey string
+	var foreignKeyValue any
+	var zero bool
+	if foreignKeyValue, zero = findID[any, any](belongTo); zero {
+		panic(fmt.Sprintf("FindBy: %s's ID field is empty", belongToTable))
+	} else {
+		foreignKey = fmt.Sprintf("%s_id", strings.ToLower(belongToTable))
+	}
+	if err := db.Find(&entities, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return entities, NotFoundError
+		} else {
+			return entities, err
+		}
+	}
+
+	for i := 0; i < len(entities); i++ {
+		ent := &entities[i]
+		associations = findAssociations[T](*ent)
+
+		switch anyEntity := any(ent).(type) {
+		case LazyLoadable:
+			anyEntity.NewInstance()
+			for _, v := range associations {
+				if v.FetchMode == FetchLazyMode {
+					anyEntity.SetLazyLoadFunc(v.Name, u.GetLazyLoadFunc(ctx, v.Value, v.ID))
+				}
+			}
+		}
+	}
+	return entities, nil
+}
 func (u *GormRepository[T, ID]) FindOne(ctx context.Context, id ID) (T, error) {
 	var entity T
 

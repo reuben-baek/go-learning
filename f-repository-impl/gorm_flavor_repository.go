@@ -34,6 +34,11 @@ func NewGormFlavorRepository(db *gorm.DB) *GormFlavorRepository {
 	return &GormFlavorRepository{db: db}
 }
 
+func (s *GormFlavorRepository) FindBy(ctx context.Context, belongTo any) ([]e_domain.Flavor, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (s *GormFlavorRepository) Create(ctx context.Context, flavor e_domain.Flavor) (e_domain.Flavor, error) {
 	var dto Flavor
 	dto = fromFlavorInstance(flavor)

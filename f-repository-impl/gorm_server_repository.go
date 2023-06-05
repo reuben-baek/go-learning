@@ -49,6 +49,11 @@ func NewGormServerRepository(db *gorm.DB) *GormServerRepository {
 	return &GormServerRepository{db: db}
 }
 
+func (s *GormServerRepository) FindBy(ctx context.Context, belongTo any) ([]e_domain.Server, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (s *GormServerRepository) Create(ctx context.Context, server e_domain.Server) (e_domain.Server, error) {
 	var dto Server
 	dto = fromServerInstance(server)

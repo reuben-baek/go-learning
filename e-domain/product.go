@@ -1,5 +1,7 @@
 package e_domain
 
+import "context"
+
 type Company struct {
 	ID   uint
 	Name string
@@ -13,4 +15,5 @@ type Product struct {
 
 type ProductRepository interface {
 	Repository[Product, uint]
+	FindByCompany(ctx context.Context, company Company) ([]Product, error)
 }

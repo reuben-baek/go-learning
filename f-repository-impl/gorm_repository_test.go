@@ -121,7 +121,7 @@ func TestGormRepository_GetLazyLoadFn(t *testing.T) {
 	assert.Equal(t, 1, loadedCompany.(Company).ID)
 }
 
-func TestGormRepositoryAssociations_LazyLoad(t *testing.T) {
+func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 	type Company struct {
 		ID   int
 		Name string
@@ -214,6 +214,27 @@ func TestGormRepositoryAssociations_BelongsTo(t *testing.T) {
 		found, err := userRepository.FindOne(ctx, created.ID)
 		assert.Nil(t, err)
 		assert.Equal(t, created, found)
+	})
+	t.Run("findBy belongTo", func(t *testing.T) {
+		ctx := context.Background()
+		kakaoEnterprise := Company{
+			Name: "kakao enterprise",
+		}
+		kakaoEnterpriseCreated, err := companyRepository.Create(ctx, kakaoEnterprise)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, kakaoEnterpriseCreated.ID)
+
+		reuben := User{
+			Name:    "reuben.b",
+			Company: kakaoEnterpriseCreated,
+		}
+		created, err := userRepository.Create(ctx, reuben)
+		assert.Nil(t, err)
+
+		users, err := userRepository.FindBy(ctx, kakaoEnterpriseCreated)
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(users))
+		assert.Equal(t, created, users[0])
 	})
 	t.Run("update field", func(t *testing.T) {
 		ctx := context.Background()

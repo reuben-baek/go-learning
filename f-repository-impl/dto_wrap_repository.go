@@ -20,6 +20,16 @@ func (d *DtoWrapRepository[D, M, ID]) FindOne(ctx context.Context, id ID) (M, er
 	return dto.To(), err
 }
 
+func (d *DtoWrapRepository[D, M, ID]) FindBy(ctx context.Context, belongTo any) ([]M, error) {
+	dtos, err := d.dtoRepository.FindBy(ctx, belongTo)
+
+	models := make([]M, 0, len(dtos))
+	for _, v := range dtos {
+		models = append(models, v.To())
+	}
+	return models, err
+}
+
 func (d *DtoWrapRepository[D, M, ID]) Create(ctx context.Context, entity M) (M, error) {
 	var dto D
 	dto = dto.From(entity).(D)
