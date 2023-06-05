@@ -121,3 +121,55 @@ func TestFindAssociations(t *testing.T) {
 	associations := findAssociations[User](user)
 	assert.Equal(t, 1, len(associations))
 }
+
+func TestFindLazyEntity(t *testing.T) {
+	type Company struct {
+		ID int
+	}
+	type Order struct {
+		ID int
+	}
+	type Role struct {
+		ID   int
+		Name string
+	}
+	type User struct {
+		LazyLoadableImpl `gorm:"-"`
+		gorm.Model
+		ID        int
+		Name      string
+		CompanyID string
+		Company   Company `fetch:"lazy"`
+		Role      Role    `fetch:"eager"`
+		Orders    []Order `fetch:"eager"`
+	}
+
+	reuben := User{
+		Model: gorm.Model{
+			ID: 1,
+		},
+		Name:      "reuben",
+		CompanyID: "1",
+	}
+	expected := []Association{
+		{
+			Name:      "Company",
+			Value:     &Company{},
+			FetchMode: FetchLazyMode,
+			ID:        "1",
+		},
+		{
+			Name:      "Role",
+			Value:     &Role{},
+			FetchMode: FetchEagerMode,
+		},
+		{
+			Name:      "Orders",
+			Value:     []Order(nil),
+			FetchMode: FetchEagerMode,
+		},
+	}
+	associations := findAssociations[User](reuben)
+
+	assert.Equal(t, expected, associations)
+}

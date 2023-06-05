@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	c_interface "github.com/reuben-baek/go-learning/c-interface"
+	"github.com/stretchr/testify/assert"
 	"reflect"
 	"testing"
 )
 
-func TestStructReflection(t *testing.T) {
+func TestStructReflection_Get(t *testing.T) {
 	v := struct {
 		ID   string
 		Func func() bool
@@ -25,6 +26,35 @@ func TestStructReflection(t *testing.T) {
 		funcField := ref.FieldByName("Func")
 		fmt.Printf("%+v\n", funcField)
 	}
+}
+
+func TestStructReflection_Set(t *testing.T) {
+	type Meta struct {
+		ID int
+	}
+	type Object struct {
+		ID   int
+		Meta Meta
+	}
+
+	object := Object{}
+	valueOfObject := reflect.ValueOf(&object)
+	fmt.Printf("%+v\n", valueOfObject)
+
+	assert.Equal(t, reflect.Ptr, valueOfObject.Kind())
+
+	indirectValueOfObject := reflect.Indirect(valueOfObject)
+	idField := indirectValueOfObject.FieldByName("ID")
+	assert.Equal(t, reflect.Int, idField.Kind())
+	idField.SetInt(10)
+	assert.Equal(t, 10, object.ID)
+
+	metaField := reflect.Indirect(reflect.ValueOf(&object.Meta))
+	metaIdField := metaField.FieldByName("ID")
+
+	assert.Equal(t, reflect.Int, metaIdField.Kind())
+	metaIdField.SetInt(10)
+	assert.Equal(t, 10, object.Meta.ID)
 }
 
 func TestInterfaceReflection(t *testing.T) {

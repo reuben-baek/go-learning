@@ -1,16 +1,20 @@
-package f_repository_impl
+package e_domain
 
-import "sync"
+import (
+	"fmt"
+	"reflect"
+	"sync"
+)
 
 type LazyLoad[T any] struct {
 	m      sync.Mutex
 	done   bool
 	value  T
 	err    error
-	loadFn func() (T, error)
+	loadFn func() (any, error)
 }
 
-func LazyLoadFn[T any](load func() (T, error)) *LazyLoad[T] {
+func LazyLoadFn[T any](load func() (any, error)) *LazyLoad[T] {
 	return &LazyLoad[T]{loadFn: load}
 }
 func LazyLoadValue[T any](v T) *LazyLoad[T] {
@@ -26,7 +30,13 @@ func (l *LazyLoad[T]) Get() T {
 	if l.done {
 		return l.value
 	}
-	l.value, l.err = l.loadFn()
+	var value any
+	var ok bool
+	value, l.err = l.loadFn()
+	l.value, ok = value.(T)
+	if !ok {
+		panic(fmt.Sprintf("LazyLoad got %s, not %s", reflect.TypeOf(value), reflect.TypeOf(l.value)))
+	}
 	l.done = true
 	return l.value
 }

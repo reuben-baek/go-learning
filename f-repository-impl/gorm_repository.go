@@ -6,7 +6,24 @@ import (
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
+	"reflect"
 )
+
+type LazyLoadable interface {
+	SetLazyLoadFactory(entity string, fn func() (any, error))
+	NewInstance()
+}
+
+type LazyLoadableImpl struct {
+	Factories map[string]func() (any, error)
+}
+
+func (l *LazyLoadableImpl) SetLazyLoadFactory(entity string, fn func() (any, error)) {
+	l.Factories[entity] = fn
+}
+func (l *LazyLoadableImpl) NewInstance() {
+	l.Factories = make(map[string]func() (any, error))
+}
 
 type GormRepository[T any, ID comparable] struct {
 	db *gorm.DB
@@ -18,11 +35,14 @@ func NewGormRepository[T any, ID comparable](db *gorm.DB) *GormRepository[T, ID]
 
 func (u *GormRepository[T, ID]) FindOne(ctx context.Context, id ID) (T, error) {
 	var entity T
-	preloads := findPreloadModels[T](entity)
+
+	associations := findAssociations[T](entity)
 
 	db := u.db.Model(&entity)
-	for _, v := range preloads {
-		db = db.Preload(v)
+	for _, v := range associations {
+		if v.FetchMode == FetchEagerMode {
+			db = db.Preload(v.Name)
+		}
 	}
 	if err := db.First(&entity, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -32,6 +52,17 @@ func (u *GormRepository[T, ID]) FindOne(ctx context.Context, id ID) (T, error) {
 		}
 	}
 
+	associations = findAssociations[T](entity)
+
+	switch anyEntity := any(&entity).(type) {
+	case LazyLoadable:
+		anyEntity.NewInstance()
+		for _, v := range associations {
+			if v.FetchMode == FetchLazyMode {
+				anyEntity.SetLazyLoadFactory(v.Name, u.GetLazyLoadFn(ctx, v.Value, v.ID))
+			}
+		}
+	}
 	return entity, nil
 }
 
@@ -96,4 +127,14 @@ func (u *GormRepository[T, ID]) Delete(ctx context.Context, entity T) error {
 		return err
 	}
 	return nil
+}
+
+func (u *GormRepository[T, ID]) GetLazyLoadFn(ctx context.Context, entity any, id any) func() (any, error) {
+	logrus.Infof("entity: %+v id: %v", entity, id)
+	return func() (any, error) {
+		if err := u.db.Model(entity).First(entity, "id = ?", id).Error; err != nil {
+			return nil, err
+		}
+		return reflect.Indirect(reflect.ValueOf(entity)).Interface(), nil
+	}
 }

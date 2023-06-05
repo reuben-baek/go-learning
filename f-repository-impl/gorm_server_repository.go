@@ -17,16 +17,16 @@ type Server struct {
 	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
-func (s *Server) to(flavorLoadFn func() (e_domain.Flavor, error)) *lazyServer {
+func (s *Server) to(flavorLoadFn func() (any, error)) *lazyServer {
 	return &lazyServer{
 		Server: e_domain.ServerInstance(s.ID, s.Name, nil),
-		flavor: LazyLoadFn(flavorLoadFn),
+		flavor: e_domain.LazyLoadFn[e_domain.Flavor](flavorLoadFn),
 	}
 }
 
 type lazyServer struct {
 	e_domain.Server
-	flavor *LazyLoad[e_domain.Flavor]
+	flavor *e_domain.LazyLoad[e_domain.Flavor]
 }
 
 func (s *lazyServer) Flavor() e_domain.Flavor {
@@ -91,8 +91,8 @@ func (s *GormServerRepository) FindOne(ctx context.Context, id string) (e_domain
 	return dto.to(s.loadFlavor(ctx, dto.FlavorID)), nil
 }
 
-func (s *GormServerRepository) loadFlavor(ctx context.Context, id string) func() (e_domain.Flavor, error) {
-	return func() (e_domain.Flavor, error) {
+func (s *GormServerRepository) loadFlavor(ctx context.Context, id string) func() (any, error) {
+	return func() (any, error) {
 		var flavorDto Flavor
 		if err := s.db.First(&flavorDto, "id = ?", id).Error; err != nil {
 			return nil, err

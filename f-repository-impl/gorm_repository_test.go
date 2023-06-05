@@ -3,6 +3,7 @@ package f_repository_impl_test
 import (
 	"context"
 	"database/sql"
+	"github.com/reuben-baek/go-learning/e-domain"
 	f_repository_impl "github.com/reuben-baek/go-learning/f-repository-impl"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
@@ -67,6 +68,109 @@ func TestGormRepositoryEmbeddedModel(t *testing.T) {
 		Author  Author `gorm:"embedded"`
 		Upvotes int32
 	}
+}
+
+func LazyLoadableInstance(entity f_repository_impl.LazyLoadable) {
+	entity.NewInstance()
+}
+
+func TestLazyLoadable(t *testing.T) {
+	type User struct {
+		f_repository_impl.LazyLoadableImpl `gorm:"-"`
+		Name                               string
+		CompanyID                          int
+	}
+	user := User{}
+	LazyLoadableInstance(&user)
+	assert.NotNil(t, user.LazyLoadableImpl)
+
+}
+
+func TestGormRepository_GetLazyLoadFn(t *testing.T) {
+	type Company struct {
+		ID   int
+		Name string
+	}
+	type LazyUser struct {
+		f_repository_impl.LazyLoadableImpl `gorm:"-"`
+		gorm.Model
+		Name        string
+		CompanyID   int
+		Company     Company                     `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+		LazyCompany *e_domain.LazyLoad[Company] `gorm:"-"`
+	}
+	db := getGormDB()
+	db.AutoMigrate(&Company{})
+	db.AutoMigrate(&LazyUser{})
+
+	companyRepository := f_repository_impl.NewGormRepository[Company, int](db)
+	userRepository := f_repository_impl.NewGormRepository[LazyUser, uint](db)
+
+	ctx := context.Background()
+	kakaoEnterprise := Company{
+		Name: "kakao enterprise",
+	}
+	kakaoEnterpriseCreated, err := companyRepository.Create(ctx, kakaoEnterprise)
+	assert.Nil(t, err)
+	assert.NotEmpty(t, kakaoEnterpriseCreated.ID)
+
+	company := &Company{}
+	loadFn := userRepository.GetLazyLoadFn(ctx, company, int(1))
+
+	loadedCompany, _ := loadFn()
+	assert.Equal(t, 1, loadedCompany.(Company).ID)
+}
+
+func TestGormRepositoryAssociations_LazyLoad(t *testing.T) {
+	type Company struct {
+		ID   int
+		Name string
+	}
+	type LazyUser struct {
+		f_repository_impl.LazyLoadableImpl `gorm:"-"`
+		gorm.Model
+		Name      string
+		CompanyID int
+		Company   Company `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	}
+
+	db := getGormDB()
+	db.AutoMigrate(&Company{})
+	db.AutoMigrate(&LazyUser{})
+
+	companyRepository := f_repository_impl.NewGormRepository[Company, int](db)
+	userRepository := f_repository_impl.NewGormRepository[LazyUser, uint](db)
+
+	t.Run("create", func(t *testing.T) {
+		ctx := context.Background()
+		kakaoEnterprise := Company{
+			Name: "kakao enterprise",
+		}
+		kakaoEnterpriseCreated, err := companyRepository.Create(ctx, kakaoEnterprise)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, kakaoEnterpriseCreated.ID)
+
+		reuben := LazyUser{
+			Name:    "reuben.b",
+			Company: kakaoEnterpriseCreated,
+		}
+		created, err := userRepository.Create(ctx, reuben)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, created.ID)
+		assert.NotEmpty(t, created.CompanyID)
+		assert.NotEmpty(t, created.Company)
+
+		found, err := userRepository.FindOne(ctx, created.ID)
+		assert.Nil(t, err)
+		assert.Equal(t, created.CompanyID, found.CompanyID)
+		assert.Empty(t, found.Company)
+
+		company, err := found.Factories["Company"]()
+		assert.Nil(t, err)
+		assert.Equal(t, kakaoEnterpriseCreated, company)
+	})
+	db.Migrator().DropTable(&Company{})
+	db.Migrator().DropTable(&User{})
 }
 
 func TestGormRepositoryAssociations_BelongsTo(t *testing.T) {
@@ -321,7 +425,6 @@ func TestGormRepositoryAssociations_HasMany(t *testing.T) {
 		Name        string
 		CreditCards []CreditCard `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" fetch:"eager"`
 	}
-
 	db := getGormDB()
 	db.AutoMigrate(&User{})
 	db.AutoMigrate(&CreditCard{})
@@ -468,7 +571,6 @@ func TestGormRepositoryAssociations_ManyToMany(t *testing.T) {
 		Name      string
 		Languages []Language `gorm:"many2many:user_languages;" fetch:"eager"`
 	}
-
 	db := getGormDB()
 	db.AutoMigrate(&Language{})
 	db.AutoMigrate(&User{})

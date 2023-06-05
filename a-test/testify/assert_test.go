@@ -22,6 +22,9 @@ func TestAssert(t *testing.T) {
 }
 
 func TestRequire(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
 	var result bool
 	result = t.Run("require func", func(t *testing.T) {
 		expected := 1

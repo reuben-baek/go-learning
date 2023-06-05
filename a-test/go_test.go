@@ -21,6 +21,9 @@ func TestShort(t *testing.T) {
 }
 
 func TestCli(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
 	t.Run("short option", func(t *testing.T) {
 		output := bytes.NewBuffer(nil)
 		cmd := exec.Command("go", "test", "github.kakaoenterprise.in/cloud-platform/go-learning/a-test", "-v", "-short", "-run", "TestShort")

@@ -14,10 +14,25 @@ import (
 	"time"
 )
 
+type Company struct {
+	ID   uint   `gorm:"primaryKey;column:id"`
+	Name string `gorm:"column:name"`
+}
+
+func (c Company) To() e_domain.Company {
+	return e_domain.Company{
+		ID:   c.ID,
+		Name: c.Name,
+	}
+}
+
 type Product struct {
-	ID     uint   `gorm:"primaryKey;column:id"`
-	Name   string `gorm:"column:name"`
-	Weight uint   `gorm:"column:weight"`
+	f_repository_impl.LazyLoadableImpl `gorm:"-"`
+	ID                                 uint   `gorm:"primaryKey;column:id"`
+	Name                               string `gorm:"column:name"`
+	Weight                             uint   `gorm:"column:weight"`
+	CompanyID                          uint
+	Company                            Company `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 }
 
 func (p Product) To() e_domain.Product {
@@ -25,27 +40,19 @@ func (p Product) To() e_domain.Product {
 		ID:     p.ID,
 		Name:   p.Name,
 		Weight: p.Weight,
+		Company: e_domain.LazyLoadFn[e_domain.Company](func() (any, error) {
+			company, _ := p.Factories["Company"]()
+			return company.(Company).To(), nil
+		}),
 	}
 }
 func (p Product) From(m e_domain.Product) any {
 	return Product{
-		ID:     m.ID,
-		Name:   m.Name,
-		Weight: m.Weight,
+		ID:        m.ID,
+		Name:      m.Name,
+		Weight:    m.Weight,
+		CompanyID: m.Company.Get().ID,
 	}
-}
-
-func NewProductRepository(dtoRepository e_domain.Repository[Product, uint]) e_domain.ProductRepository {
-	return f_repository_impl.NewDtoWrapRepository[Product, e_domain.Product, uint](dtoRepository)
-}
-
-func NewGormProductRepository(db *gorm.DB) e_domain.ProductRepository {
-	return f_repository_impl.NewGormDtoWrapRepository[Product, e_domain.Product, uint](db)
-}
-
-func NewInMemoryProductRepository() e_domain.ProductRepository {
-	dtoRepository := f_repository_impl.NewInMemoryRepository[Product, uint]()
-	return f_repository_impl.NewDtoWrapRepository[Product, e_domain.Product, uint](dtoRepository)
 }
 
 func TestProductRepository(t *testing.T) {
@@ -61,13 +68,28 @@ func TestProductRepository(t *testing.T) {
 	}
 
 	db.AutoMigrate(&Product{})
+	db.AutoMigrate(&Company{})
 
-	productRepository := NewGormProductRepository(db)
+	companyRepository := f_repository_impl.NewGormRepository[Company, int](db)
 
 	ctx := context.Background()
+	kakaoEnterprise := Company{
+		Name: "kakao enterprise",
+	}
+	kakaoEnterpriseCreated, err := companyRepository.Create(ctx, kakaoEnterprise)
+	assert.Nil(t, err)
+	assert.NotEmpty(t, kakaoEnterpriseCreated.ID)
+
+	productRepository := f_repository_impl.NewGormDtoWrapRepository[Product, e_domain.Product, uint](db)
+
+	domainCompany := e_domain.Company{
+		ID:   kakaoEnterpriseCreated.ID,
+		Name: kakaoEnterpriseCreated.Name,
+	}
 	macM1 := e_domain.Product{
-		Name:   "mac-m1",
-		Weight: 1000,
+		Name:    "mac-m1",
+		Weight:  1000,
+		Company: e_domain.LazyLoadValue(domainCompany),
 	}
 	created, err := productRepository.Create(ctx, macM1)
 	assert.Nil(t, err)
@@ -76,6 +98,8 @@ func TestProductRepository(t *testing.T) {
 	found, err := productRepository.FindOne(ctx, created.ID)
 	assert.Nil(t, err)
 	assert.Equal(t, created.ID, found.ID)
+	company := found.Company.Get()
+	assert.Equal(t, domainCompany, company)
 
 	macM1Update := found
 	macM1Update.Weight = 2000
