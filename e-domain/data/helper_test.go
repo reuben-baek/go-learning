@@ -1,10 +1,15 @@
 package data
 
 import (
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/gorm"
 	"testing"
 )
+
+func init() {
+	logrus.SetLevel(logrus.DebugLevel)
+}
 
 func TestFindID(t *testing.T) {
 	t.Run("success - notempty id", func(t *testing.T) {
@@ -66,33 +71,6 @@ func TestFindID(t *testing.T) {
 			findID[TT, int](reuben)
 		})
 	})
-}
-
-func TestFindPreloadModels(t *testing.T) {
-	type Company struct {
-		ID   int
-		Name string
-	}
-	type Role struct {
-		ID   int
-		Name string
-	}
-	type Order struct {
-		ID   int
-		Name string
-	}
-	type User struct {
-		gorm.Model
-		Name      string
-		CompanyID uint
-		Company   Company `fetch:"eager"`
-		Role      Role
-		Orders    []Order `fetch:"eager"`
-	}
-
-	models := findPreloadModels[User](User{})
-	expected := []string{"Company", "Orders"}
-	assert.Equal(t, expected, models)
 }
 
 func TestFindAssociations(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 	"reflect"
 )
 
@@ -36,42 +37,6 @@ func findValue(entity any, fieldName string) any {
 	return value.Interface()
 }
 
-func isZero[ID comparable](id ID) bool {
-	value := reflect.ValueOf(id)
-	return value.IsZero()
-}
-
-func findPreloadModels[T any](entity T) []string {
-	// todo cache, recursive
-	var models []string
-	typeOf := reflect.TypeOf(entity)
-	numOfField := typeOf.NumField()
-	for i := 0; i < numOfField; i++ {
-		field := typeOf.Field(i)
-		if field.Type.Kind() == reflect.Struct {
-			fieldType := field.Type.String()
-			fieldTypeName := field.Type.Name()
-			logrus.Debugf("findPreloadModels: field Name[%s], Type[%s]", fieldTypeName, fieldType)
-			if fieldType != "gorm.Model" {
-				if field.Tag.Get("fetch") == FetchEagerMode {
-					models = append(models, fieldTypeName)
-				}
-			}
-		} else if field.Type.Kind() == reflect.Slice {
-			if field.Type.Elem().Kind() == reflect.Struct {
-				elementType := field.Type.Elem()
-				fieldType := elementType.String()
-				fieldTypeName := elementType.Name()
-				logrus.Debugf("findPreloadModels: field Name[%s], Type[%s]", fieldTypeName, fieldType)
-				if field.Tag.Get("fetch") == FetchEagerMode {
-					models = append(models, fieldTypeName+"s")
-				}
-			}
-		}
-	}
-	return models
-}
-
 type FetchMode string
 
 const (
@@ -97,6 +62,25 @@ type Association struct {
 	FetchMode FetchMode
 }
 
+var systemStructTypes = []any{
+	gorm.Model{},
+	LazyLoader{},
+}
+
+var systemStructTypeMap map[string]bool
+
+func init() {
+	systemStructTypeMap = make(map[string]bool)
+	for _, s := range systemStructTypes {
+		typeName := reflect.TypeOf(s).String()
+		systemStructTypeMap[typeName] = true
+	}
+}
+
+func isSystemStructType(typeName string) bool {
+	return systemStructTypeMap[typeName]
+}
+
 func findAssociations[T any](entity T) []Association {
 	var associations []Association
 	valueOf := reflect.ValueOf(entity)
@@ -107,7 +91,7 @@ func findAssociations[T any](entity T) []Association {
 		field := valueOf.Field(i)
 		if field.Type().Kind() == reflect.Struct {
 			fieldType := field.Type().String()
-			if fieldType != "gorm.Model" && fieldType != "data.LazyLoader" {
+			if !isSystemStructType(fieldType) {
 				fieldTypeName := field.Type().Name()
 				logrus.Debugf("findAssociation: field Name[%s], Type[%s], Value[%+v]", fieldTypeName, fieldType, field.Interface())
 
