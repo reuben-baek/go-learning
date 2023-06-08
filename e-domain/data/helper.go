@@ -1,4 +1,4 @@
-package f_repository_impl
+package data
 
 import (
 	"errors"
@@ -51,7 +51,7 @@ func findPreloadModels[T any](entity T) []string {
 		if field.Type.Kind() == reflect.Struct {
 			fieldType := field.Type.String()
 			fieldTypeName := field.Type.Name()
-			logrus.Debugf("field: Name=%s, Type=%s", fieldTypeName, fieldType)
+			logrus.Debugf("findPreloadModels: field Name[%s], Type[%s]", fieldTypeName, fieldType)
 			if fieldType != "gorm.Model" {
 				if field.Tag.Get("fetch") == FetchEagerMode {
 					models = append(models, fieldTypeName)
@@ -62,7 +62,7 @@ func findPreloadModels[T any](entity T) []string {
 				elementType := field.Type.Elem()
 				fieldType := elementType.String()
 				fieldTypeName := elementType.Name()
-				logrus.Debugf("field: Name=%s, Type=%s", fieldTypeName, fieldType)
+				logrus.Debugf("findPreloadModels: field Name[%s], Type[%s]", fieldTypeName, fieldType)
 				if field.Tag.Get("fetch") == FetchEagerMode {
 					models = append(models, fieldTypeName+"s")
 				}
@@ -107,9 +107,9 @@ func findAssociations[T any](entity T) []Association {
 		field := valueOf.Field(i)
 		if field.Type().Kind() == reflect.Struct {
 			fieldType := field.Type().String()
-			if fieldType != "gorm.Model" && fieldType != "f_repository_impl.LazyLoader" {
+			if fieldType != "gorm.Model" && fieldType != "data.LazyLoader" {
 				fieldTypeName := field.Type().Name()
-				logrus.Debugf("field: Name=%s, Type=%s, Value=%+v", fieldTypeName, fieldType, field.Interface())
+				logrus.Debugf("findAssociation: field Name[%s], Type[%s], Value[%+v]", fieldTypeName, fieldType, field.Interface())
 
 				fetchMode := ToFetchMode(typeOf.Field(i).Tag.Get("fetch"))
 				switch fetchMode {
@@ -135,7 +135,7 @@ func findAssociations[T any](entity T) []Association {
 				elementType := field.Type().Elem()
 				fieldType := elementType.String()
 				fieldTypeName := elementType.Name()
-				logrus.Debugf("field: Name=%s, Type=%s, Value=%+v", fieldTypeName, fieldType, field.Interface())
+				logrus.Debugf("findAssocation: field Name=[%s], Type[%s], Value[%+v]", fieldTypeName, fieldType, field.Interface())
 
 				associations = append(associations, Association{
 					Name:      fieldTypeName + "s",

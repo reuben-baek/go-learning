@@ -1,5 +1,7 @@
 package e_domain
 
+import "github.com/reuben-baek/go-learning/e-domain/data"
+
 type Server interface {
 	ID() string
 	Name() string
@@ -79,9 +81,9 @@ func (f *flavorEntity) Name() string {
 }
 
 type ServerRepository interface {
-	Repository[Server, string]
+	data.Repository[Server, string]
 }
 
 type FlavorRepository interface {
-	Repository[Flavor, string]
+	data.Repository[Flavor, string]
 }

@@ -1,8 +1,7 @@
-package f_repository_impl
+package data
 
 import (
 	"context"
-	"github.com/reuben-baek/go-learning/e-domain"
 	"gorm.io/gorm"
 )
 
@@ -12,7 +11,7 @@ type DTO[M any] interface {
 }
 
 type DtoWrapRepository[D DTO[M], M any, ID comparable] struct {
-	dtoRepository e_domain.Repository[D, ID]
+	dtoRepository Repository[D, ID]
 }
 
 func (d *DtoWrapRepository[D, M, ID]) FindOne(ctx context.Context, id ID) (M, error) {
@@ -51,7 +50,7 @@ func (d *DtoWrapRepository[D, M, ID]) Delete(ctx context.Context, entity M) erro
 	return err
 }
 
-func NewDtoWrapRepository[D DTO[M], M any, ID comparable](dtoRepository e_domain.Repository[D, ID]) *DtoWrapRepository[D, M, ID] {
+func NewDtoWrapRepository[D DTO[M], M any, ID comparable](dtoRepository Repository[D, ID]) *DtoWrapRepository[D, M, ID] {
 	return &DtoWrapRepository[D, M, ID]{
 		dtoRepository: dtoRepository,
 	}

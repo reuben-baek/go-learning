@@ -3,6 +3,7 @@ package f_repository_impl
 import (
 	"context"
 	"github.com/reuben-baek/go-learning/e-domain"
+	"github.com/reuben-baek/go-learning/e-domain/data"
 	"gorm.io/gorm"
 	"time"
 )
@@ -20,13 +21,13 @@ type Server struct {
 func (s *Server) to(flavorLoadFn func() (any, error)) *lazyServer {
 	return &lazyServer{
 		Server: e_domain.ServerInstance(s.ID, s.Name, nil),
-		flavor: e_domain.LazyLoadFn[e_domain.Flavor](flavorLoadFn),
+		flavor: data.LazyLoadFn[e_domain.Flavor](flavorLoadFn),
 	}
 }
 
 type lazyServer struct {
 	e_domain.Server
-	flavor *e_domain.LazyLoad[e_domain.Flavor]
+	flavor *data.LazyLoad[e_domain.Flavor]
 }
 
 func (s *lazyServer) Flavor() e_domain.Flavor {

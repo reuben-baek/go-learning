@@ -1,11 +1,12 @@
-package f_repository_impl_test
+package data_test
 
 import (
 	"context"
 	"database/sql"
-	"github.com/reuben-baek/go-learning/e-domain"
-	f_repository_impl "github.com/reuben-baek/go-learning/f-repository-impl"
+	"github.com/reuben-baek/go-learning/e-domain/data"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -14,6 +15,10 @@ import (
 	"testing"
 	"time"
 )
+
+func init() {
+	logrus.SetLevel(logrus.DebugLevel)
+}
 
 func getGormDB() *gorm.DB {
 	logConfig := logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
@@ -70,15 +75,15 @@ func TestGormRepositoryEmbeddedModel(t *testing.T) {
 	}
 }
 
-func LazyLoadableInstance(entity f_repository_impl.LazyLoadable) {
+func LazyLoadableInstance(entity data.LazyLoadable) {
 	entity.NewInstance()
 }
 
 func TestLazyLoadable(t *testing.T) {
 	type User struct {
-		f_repository_impl.LazyLoader `gorm:"-"`
-		Name                         string
-		CompanyID                    int
+		data.LazyLoader `gorm:"-"`
+		Name            string
+		CompanyID       int
 	}
 	user := User{}
 	LazyLoadableInstance(&user)
@@ -92,19 +97,19 @@ func TestGormRepository_GetLazyLoadFn(t *testing.T) {
 		Name string
 	}
 	type LazyUser struct {
-		f_repository_impl.LazyLoader `gorm:"-"`
+		data.LazyLoader `gorm:"-"`
 		gorm.Model
 		Name        string
 		CompanyID   int
-		Company     Company                     `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
-		LazyCompany *e_domain.LazyLoad[Company] `gorm:"-"`
+		Company     Company                 `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+		LazyCompany *data.LazyLoad[Company] `gorm:"-"`
 	}
 	db := getGormDB()
 	db.AutoMigrate(&Company{})
 	db.AutoMigrate(&LazyUser{})
 
-	companyRepository := f_repository_impl.NewGormRepository[Company, int](db)
-	userRepository := f_repository_impl.NewGormRepository[LazyUser, uint](db)
+	companyRepository := data.NewGormRepository[Company, int](db)
+	userRepository := data.NewGormRepository[LazyUser, uint](db)
 
 	ctx := context.Background()
 	kakaoEnterprise := Company{
@@ -127,7 +132,7 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 		Name string
 	}
 	type LazyUser struct {
-		f_repository_impl.LazyLoader `gorm:"-"`
+		data.LazyLoader `gorm:"-"`
 		gorm.Model
 		Name      string
 		CompanyID int
@@ -138,8 +143,8 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 	db.AutoMigrate(&Company{})
 	db.AutoMigrate(&LazyUser{})
 
-	companyRepository := f_repository_impl.NewGormRepository[Company, int](db)
-	userRepository := f_repository_impl.NewGormRepository[LazyUser, uint](db)
+	companyRepository := data.NewGormRepository[Company, int](db)
+	userRepository := data.NewGormRepository[LazyUser, uint](db)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -165,9 +170,133 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 		assert.Equal(t, created.CompanyID, found.CompanyID)
 		assert.Empty(t, found.Company)
 
-		company, err := f_repository_impl.LazyLoadNow[Company](&found)
+		company, err := data.LazyLoadNow[Company](&found)
 		assert.Nil(t, err)
 		assert.Equal(t, kakaoEnterpriseCreated, company)
+	})
+
+	t.Run("update", func(t *testing.T) {
+		ctx := context.Background()
+		kakaoEnterprise := Company{
+			Name: "kakao enterprise",
+		}
+		kakaoEnterpriseCreated, _ := companyRepository.Create(ctx, kakaoEnterprise)
+		kakaoCloud := Company{
+			Name: "kakao cloud",
+		}
+		kakaoCloudCreated, _ := companyRepository.Create(ctx, kakaoCloud)
+		reuben := LazyUser{
+			Name:    "reuben.b",
+			Company: kakaoEnterpriseCreated,
+		}
+		reuben, _ = userRepository.Create(ctx, reuben)
+
+		t.Run("name field without lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			assert.Empty(t, found.Company)
+			found.Name = "reuben.baek"
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Equal(t, found.CompanyID, updated.CompanyID)
+			assert.Empty(t, updated.Company)
+			company, err := data.LazyLoadNow[Company](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, kakaoEnterpriseCreated, updated.Company)
+			assert.Equal(t, kakaoEnterpriseCreated, company)
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("name field after lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			company, err := data.LazyLoadNow[Company](&found)
+			assert.Nil(t, err)
+			assert.Equal(t, kakaoEnterpriseCreated, found.Company)
+			assert.Equal(t, kakaoEnterpriseCreated, company)
+			found.Name = "reuben.baek"
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Equal(t, found.CompanyID, updated.CompanyID)
+			assert.Equal(t, updated.CompanyID, updated.CompanyID)
+			assert.Empty(t, updated.Company)
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("belongTo CompanyID field without lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			assert.Empty(t, found.Company)
+			found.CompanyID = kakaoCloudCreated.ID
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Equal(t, found.CompanyID, updated.CompanyID)
+			assert.Empty(t, updated.Company)
+			company, err := data.LazyLoadNow[Company](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, kakaoCloudCreated, updated.Company)
+			assert.Equal(t, updated.Company, company)
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("belongTo CompanyID field after lazy load - fail", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			require.Equal(t, kakaoEnterpriseCreated.ID, found.CompanyID)
+
+			company, err := data.LazyLoadNow[Company](&found)
+			assert.Nil(t, err)
+			assert.Equal(t, kakaoEnterpriseCreated, found.Company)
+			assert.Equal(t, kakaoEnterpriseCreated, company)
+
+			found.CompanyID = kakaoCloudCreated.ID
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.NotEqual(t, found.CompanyID, updated.CompanyID)
+			assert.Empty(t, updated.Company)
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("belongTo CompanyID field after lazy load - success", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			require.Equal(t, kakaoEnterpriseCreated.ID, found.CompanyID)
+
+			company, err := data.LazyLoadNow[Company](&found)
+			assert.Nil(t, err)
+			assert.Equal(t, kakaoEnterpriseCreated, found.Company)
+			assert.Equal(t, kakaoEnterpriseCreated, company)
+
+			found.CompanyID = kakaoCloudCreated.ID
+			found.Company = Company{}
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Equal(t, found.CompanyID, updated.CompanyID)
+			assert.Empty(t, updated.Company)
+
+			company, err = data.LazyLoadNow[Company](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, kakaoCloudCreated, updated.Company)
+			assert.Equal(t, updated.Company, company)
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("company field before lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			require.Equal(t, kakaoEnterpriseCreated.ID, found.CompanyID)
+
+			found.Company = kakaoCloudCreated
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Equal(t, kakaoCloudCreated.ID, updated.CompanyID)
+			assert.Empty(t, updated.Company)
+			company, err := data.LazyLoadNow[Company](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, kakaoCloudCreated, updated.Company)
+			assert.Equal(t, updated.Company, company)
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
 	})
 	db.Migrator().DropTable(&Company{})
 	db.Migrator().DropTable(&User{})
@@ -189,8 +318,8 @@ func TestGormRepositoryAssociations_BelongsTo(t *testing.T) {
 	db.AutoMigrate(&Company{})
 	db.AutoMigrate(&User{})
 
-	companyRepository := f_repository_impl.NewGormRepository[Company, int](db)
-	userRepository := f_repository_impl.NewGormRepository[User, uint](db)
+	companyRepository := data.NewGormRepository[Company, int](db)
+	userRepository := data.NewGormRepository[User, uint](db)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -330,7 +459,7 @@ func TestGormRepositoryAssociations_HasOne(t *testing.T) {
 	db.AutoMigrate(&User{})
 	db.AutoMigrate(&CreditCard{})
 
-	userRepository := f_repository_impl.NewGormRepository[User, uint](db)
+	userRepository := data.NewGormRepository[User, uint](db)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -422,7 +551,7 @@ func TestGormRepositoryAssociations_HasOne(t *testing.T) {
 		assert.Nil(t, err)
 
 		_, err = userRepository.FindOne(ctx, created.ID)
-		assert.ErrorIs(t, f_repository_impl.NotFoundError, err)
+		assert.ErrorIs(t, data.NotFoundError, err)
 
 		var creditCard CreditCard
 		result := db.Model(&CreditCard{}).Where("id = ? ", created.CreditCard.ID).First(&creditCard)
@@ -450,7 +579,7 @@ func TestGormRepositoryAssociations_HasMany(t *testing.T) {
 	db.AutoMigrate(&User{})
 	db.AutoMigrate(&CreditCard{})
 
-	userRepository := f_repository_impl.NewGormRepository[User, uint](db)
+	userRepository := data.NewGormRepository[User, uint](db)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -568,7 +697,7 @@ func TestGormRepositoryAssociations_HasMany(t *testing.T) {
 		assert.Nil(t, err)
 
 		_, err = userRepository.FindOne(ctx, created.ID)
-		assert.ErrorIs(t, f_repository_impl.NotFoundError, err)
+		assert.ErrorIs(t, data.NotFoundError, err)
 
 		var cards []CreditCard
 		result := db.Model(&CreditCard{}).Find(&cards, []uint{created.CreditCards[0].ID, created.CreditCards[1].ID})
@@ -596,8 +725,8 @@ func TestGormRepositoryAssociations_ManyToMany(t *testing.T) {
 	db.AutoMigrate(&Language{})
 	db.AutoMigrate(&User{})
 
-	languageRepository := f_repository_impl.NewGormRepository[Language, uint](db)
-	userRepository := f_repository_impl.NewGormRepository[User, uint](db)
+	languageRepository := data.NewGormRepository[Language, uint](db)
+	userRepository := data.NewGormRepository[User, uint](db)
 
 	ctx := context.Background()
 
@@ -676,7 +805,7 @@ func TestGormRepositoryAssociations_ManyToMany(t *testing.T) {
 		assert.Nil(t, err)
 
 		_, err = userRepository.FindOne(ctx, created.ID)
-		assert.ErrorIs(t, f_repository_impl.NotFoundError, err)
+		assert.ErrorIs(t, data.NotFoundError, err)
 
 		var languages []Language
 		result := db.Unscoped().Table("user_languages").Where("user_id = ?", created.ID).Find(&languages)

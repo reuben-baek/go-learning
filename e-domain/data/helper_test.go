@@ -1,4 +1,4 @@
-package f_repository_impl
+package data
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -34,7 +34,7 @@ func TestFindID(t *testing.T) {
 		assert.True(t, zero)
 	})
 	t.Run("fail - Entity has not ID field", func(t *testing.T) {
-		assert.PanicsWithValue(t, "Entity 'f_repository_impl.TT' has not ID field", func() {
+		assert.PanicsWithValue(t, "Entity 'data.TT' has not ID field", func() {
 			type TT struct {
 				Name string
 			}
@@ -45,7 +45,7 @@ func TestFindID(t *testing.T) {
 		})
 	})
 	t.Run("fail - Entity ID type is not comparable", func(t *testing.T) {
-		assert.PanicsWithValue(t, "ID field type 'map[string]string' of 'f_repository_impl.TT' is not comparable", func() {
+		assert.PanicsWithValue(t, "ID field type 'map[string]string' of 'data.TT' is not comparable", func() {
 			type TT struct {
 				ID map[string]string
 			}

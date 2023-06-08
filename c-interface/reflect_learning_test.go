@@ -49,12 +49,17 @@ func TestStructReflection_Set(t *testing.T) {
 	idField.SetInt(10)
 	assert.Equal(t, 10, object.ID)
 
-	metaField := reflect.Indirect(reflect.ValueOf(&object.Meta))
-	metaIdField := metaField.FieldByName("ID")
+	metaValueOf := reflect.Indirect(reflect.ValueOf(&object.Meta))
+	metaIdField := metaValueOf.FieldByName("ID")
 
 	assert.Equal(t, reflect.Int, metaIdField.Kind())
 	metaIdField.SetInt(10)
 	assert.Equal(t, 10, object.Meta.ID)
+
+	metaField := indirectValueOfObject.FieldByName("Meta")
+	meta := Meta{ID: 20}
+	metaField.Set(reflect.ValueOf(meta))
+	assert.Equal(t, meta, object.Meta)
 }
 
 func TestInterfaceReflection(t *testing.T) {

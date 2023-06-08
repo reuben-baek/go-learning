@@ -1,4 +1,4 @@
-package e_domain
+package data
 
 import (
 	"context"

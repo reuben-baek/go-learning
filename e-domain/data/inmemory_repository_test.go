@@ -1,9 +1,8 @@
-package f_repository_impl_test
+package data_test
 
 import (
 	"context"
-	e_domain "github.com/reuben-baek/go-learning/e-domain"
-	f_repository_impl "github.com/reuben-baek/go-learning/f-repository-impl"
+	"github.com/reuben-baek/go-learning/e-domain/data"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -14,11 +13,11 @@ type User struct {
 }
 
 type UserRepository interface {
-	e_domain.Repository[User, string]
+	data.Repository[User, string]
 }
 
 func NewInMemoryUserRepository() UserRepository {
-	return f_repository_impl.NewInMemoryRepository[User, string]()
+	return data.NewInMemoryRepository[User, string]()
 }
 
 func TestUserRepository(t *testing.T) {
@@ -53,5 +52,5 @@ func TestUserRepository(t *testing.T) {
 	assert.Nil(t, err)
 
 	_, err = userRepository.FindOne(ctx, reuben.ID)
-	assert.ErrorIs(t, f_repository_impl.NotFoundError, err)
+	assert.ErrorIs(t, data.NotFoundError, err)
 }
