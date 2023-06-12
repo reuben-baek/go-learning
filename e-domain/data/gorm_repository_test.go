@@ -120,18 +120,18 @@ func TestGormRepository_GetLazyLoadFn(t *testing.T) {
 	assert.NotEmpty(t, kakaoEnterpriseCreated.ID)
 
 	company := &Company{}
-	loadFn := userRepository.GetLazyLoadFunc(ctx, company, int(1))
+	loadFn := userRepository.GetLazyLoadFuncOfBelongTo(ctx, company, int(1))
 
 	loadedCompany, _ := loadFn()
 	assert.Equal(t, 1, loadedCompany.(Company).ID)
 }
 
-func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
+func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 	type Company struct {
 		ID   int
 		Name string
 	}
-	type LazyUser struct {
+	type User struct {
 		data.LazyLoader `gorm:"-"`
 		gorm.Model
 		Name      string
@@ -141,10 +141,10 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 
 	db := getGormDB()
 	db.AutoMigrate(&Company{})
-	db.AutoMigrate(&LazyUser{})
+	db.AutoMigrate(&User{})
 
 	companyRepository := data.NewGormRepository[Company, int](db)
-	userRepository := data.NewGormRepository[LazyUser, uint](db)
+	userRepository := data.NewGormRepository[User, uint](db)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -155,7 +155,7 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 		assert.Nil(t, err)
 		assert.NotEmpty(t, kakaoEnterpriseCreated.ID)
 
-		reuben := LazyUser{
+		reuben := User{
 			Name:    "reuben.b",
 			Company: kakaoEnterpriseCreated,
 		}
@@ -185,7 +185,7 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 			Name: "kakao cloud",
 		}
 		kakaoCloudCreated, _ := companyRepository.Create(ctx, kakaoCloud)
-		reuben := LazyUser{
+		reuben := User{
 			Name:    "reuben.b",
 			Company: kakaoEnterpriseCreated,
 		}
@@ -240,7 +240,7 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 			// rollback for next tests
 			userRepository.Update(ctx, reuben)
 		})
-		t.Run("belongTo CompanyID field after lazy load - fail", func(t *testing.T) {
+		t.Run("belongTo CompanyID field after lazy load - only foreignKey", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
 			require.Equal(t, kakaoEnterpriseCreated.ID, found.CompanyID)
 
@@ -252,13 +252,13 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 			found.CompanyID = kakaoCloudCreated.ID
 			updated, err := userRepository.Update(ctx, found)
 			assert.Nil(t, err)
-			assert.NotEqual(t, found.CompanyID, updated.CompanyID)
+			assert.Equal(t, found.CompanyID, updated.CompanyID)
 			assert.Empty(t, updated.Company)
 
 			// rollback for next tests
 			userRepository.Update(ctx, reuben)
 		})
-		t.Run("belongTo CompanyID field after lazy load - success", func(t *testing.T) {
+		t.Run("belongTo CompanyID field after lazy load - foreignKey and value", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
 			require.Equal(t, kakaoEnterpriseCreated.ID, found.CompanyID)
 
@@ -285,6 +285,7 @@ func TestGormRepositoryAssociations_LazyLoad_belongTo(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
 			require.Equal(t, kakaoEnterpriseCreated.ID, found.CompanyID)
 
+			found.CompanyID = kakaoCloudCreated.ID
 			found.Company = kakaoCloudCreated
 			updated, err := userRepository.Update(ctx, found)
 			assert.Nil(t, err)
@@ -443,6 +444,165 @@ func TestGormRepositoryAssociations_BelongsTo(t *testing.T) {
 	db.Migrator().DropTable(&Company{})
 }
 
+func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
+	// User has one CreditCard, UserID is the foreign key
+	type CreditCard struct {
+		gorm.Model
+		Number string
+		UserID uint
+	}
+	type User struct {
+		data.LazyLoader `gorm:"-"`
+		gorm.Model
+		Name       string
+		CreditCard CreditCard `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	}
+	db := getGormDB()
+	db.AutoMigrate(&User{})
+	db.AutoMigrate(&CreditCard{})
+
+	userRepository := data.NewGormRepository[User, uint](db)
+
+	t.Run("create", func(t *testing.T) {
+		ctx := context.Background()
+
+		reuben := User{
+			Name: "reuben.b",
+			CreditCard: CreditCard{
+				Number: "123412341234",
+			},
+		}
+		created, err := userRepository.Create(ctx, reuben)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, created.ID)
+		assert.Equal(t, reuben.Name, created.Name)
+		assert.NotEmpty(t, created.CreditCard.ID)
+		assert.Equal(t, reuben.CreditCard.Number, created.CreditCard.Number)
+		assert.NotEmpty(t, created.CreditCard.UserID)
+
+		found, err := userRepository.FindOne(ctx, created.ID)
+		assert.Nil(t, err)
+		assert.Equal(t, created.ID, found.ID)
+		assert.Empty(t, found.CreditCard)
+		creditCard, err := data.LazyLoadNow[CreditCard](&found)
+		assert.Nil(t, err)
+		assert.Equal(t, created.CreditCard, creditCard)
+	})
+
+	t.Run("update field", func(t *testing.T) {
+		ctx := context.Background()
+
+		reuben := User{
+			Name: "reuben.b",
+			CreditCard: CreditCard{
+				Number: "123412341234",
+			},
+		}
+		reuben, _ = userRepository.Create(ctx, reuben)
+
+		t.Run("name field without lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			found.Name = "reuben.baek"
+			updated, err := userRepository.Update(ctx, found)
+
+			assert.Nil(t, err)
+			assert.NotEmpty(t, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Empty(t, updated.CreditCard)
+
+			creditCard, err := data.LazyLoadNow[CreditCard](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, reuben.CreditCard, creditCard)
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("name field after lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			creditCard, err := data.LazyLoadNow[CreditCard](&found)
+			assert.Nil(t, err)
+			assert.NotEmpty(t, found.CreditCard)
+			assert.Equal(t, found.CreditCard, creditCard)
+
+			found.Name = "reuben.baek"
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.NotEmpty(t, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Empty(t, updated.CreditCard)
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("hasOne field before lazy load - success", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+
+			found.CreditCard = CreditCard{Number: "999999999999"}
+
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Empty(t, updated.CreditCard)
+
+			creditCard, err := data.LazyLoadNow[CreditCard](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, updated.CreditCard, creditCard)
+			assert.NotEmpty(t, updated.CreditCard.ID)
+			assert.Equal(t, reuben.ID, updated.CreditCard.UserID)
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("hasOne field after lazy load - success", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+
+			creditCard, err := data.LazyLoadNow[CreditCard](&found)
+			assert.Nil(t, err)
+			assert.NotEmpty(t, found.CreditCard)
+			assert.Equal(t, found.CreditCard, creditCard)
+
+			found.CreditCard = CreditCard{Number: "999999999999"}
+
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Empty(t, updated.CreditCard)
+
+			creditCard, err = data.LazyLoadNow[CreditCard](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, found.CreditCard.Number, updated.CreditCard.Number)
+			assert.NotEmpty(t, updated.CreditCard.ID)
+			assert.Equal(t, reuben.ID, updated.CreditCard.UserID)
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		ctx := context.Background()
+
+		reuben := User{
+			Name: "reuben.b",
+			CreditCard: CreditCard{
+				Number: "123412341234",
+			},
+		}
+		created, _ := userRepository.Create(ctx, reuben)
+		found, _ := userRepository.FindOne(ctx, created.ID)
+
+		err := userRepository.Delete(ctx, found) // soft delete
+		assert.Nil(t, err)
+
+		_, err = userRepository.FindOne(ctx, created.ID)
+		assert.ErrorIs(t, data.NotFoundError, err)
+
+		var creditCard CreditCard
+		result := db.Model(&CreditCard{}).Where("id = ? ", created.CreditCard.ID).First(&creditCard)
+		assert.ErrorIs(t, gorm.ErrRecordNotFound, result.Error)
+		assert.Empty(t, creditCard)
+	})
+
+	db.Migrator().DropTable(&User{})
+	db.Migrator().DropTable(&CreditCard{})
+}
 func TestGormRepositoryAssociations_HasOne(t *testing.T) {
 	// User has one CreditCard, UserID is the foreign key
 	type CreditCard struct {
@@ -507,7 +667,7 @@ func TestGormRepositoryAssociations_HasOne(t *testing.T) {
 
 		var creditCard CreditCard
 		db.Model(&CreditCard{}).Where("id = ? ", created.CreditCard.ID).First(&creditCard)
-		assert.Equal(t, found.CreditCard, creditCard)
+		assert.Equal(t, updated.CreditCard, creditCard)
 	})
 
 	t.Run("update association", func(t *testing.T) {
@@ -562,6 +722,189 @@ func TestGormRepositoryAssociations_HasOne(t *testing.T) {
 	db.Migrator().DropTable(&User{})
 	db.Migrator().DropTable(&CreditCard{})
 }
+
+func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
+	// User has many CreditCards, UserID is the foreign key
+	type CreditCard struct {
+		gorm.Model
+		Number string
+		UserID uint
+	}
+
+	type User struct {
+		data.LazyLoader `gorm:"-"`
+		gorm.Model
+		Name        string
+		CreditCards []CreditCard `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" fetch:"lazy"`
+	}
+	db := getGormDB()
+	db.AutoMigrate(&User{})
+	db.AutoMigrate(&CreditCard{})
+
+	userRepository := data.NewGormRepository[User, uint](db)
+
+	t.Run("create", func(t *testing.T) {
+		ctx := context.Background()
+
+		creditCards := []CreditCard{
+			{
+				Number: "123412341234",
+			},
+			{
+				Number: "000000000000",
+			},
+		}
+		reuben := User{
+			Name:        "reuben.b",
+			CreditCards: creditCards,
+		}
+		created, err := userRepository.Create(ctx, reuben)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, created.ID)
+		assert.NotEmpty(t, created.CreditCards[0].ID)
+		assert.NotEmpty(t, created.CreditCards[1].ID)
+
+		found, err := userRepository.FindOne(ctx, created.ID)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, found.ID)
+		assert.Equal(t, 0, len(found.CreditCards))
+
+		foundCreditCards, err := data.LazyLoadNow[[]CreditCard](&found)
+		assert.Nil(t, err)
+		assert.Equal(t, created.CreditCards, foundCreditCards)
+	})
+
+	t.Run("update field", func(t *testing.T) {
+		ctx := context.Background()
+
+		creditCards := []CreditCard{
+			{
+				Number: "123412341234",
+			},
+			{
+				Number: "000000000000",
+			},
+		}
+		reuben := User{
+			Name:        "reuben.b",
+			CreditCards: creditCards,
+		}
+		reuben, _ = userRepository.Create(ctx, reuben)
+
+		t.Run("name field without lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			found.Name = "reuben.baek"
+			updated, err := userRepository.Update(ctx, found)
+
+			assert.Nil(t, err)
+			assert.NotEmpty(t, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Empty(t, updated.CreditCards)
+
+			creditCards, err := data.LazyLoadNow[[]CreditCard](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, reuben.CreditCards, creditCards)
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+
+		t.Run("name field after lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			creditCards, err := data.LazyLoadNow[[]CreditCard](&found)
+			assert.Nil(t, err)
+			assert.NotEmpty(t, found.CreditCards)
+			assert.Equal(t, found.CreditCards, creditCards)
+
+			found.Name = "reuben.baek"
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.NotEmpty(t, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Empty(t, updated.CreditCards)
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("hasOne field before lazy load - success", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+
+			found.CreditCards = []CreditCard{
+				{
+					Number: "999999999999",
+				},
+			}
+
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Empty(t, updated.CreditCards)
+
+			creditCards, err := data.LazyLoadNow[[]CreditCard](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, updated.CreditCards, creditCards)
+			assert.Equal(t, 1, len(updated.CreditCards))
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+		t.Run("hasOne field after lazy load - success", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			data.LazyLoadNow[[]CreditCard](&found)
+
+			found.CreditCards = []CreditCard{
+				{
+					Number: "999999999999",
+				},
+			}
+
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Empty(t, updated.CreditCards)
+
+			creditCards, err := data.LazyLoadNow[[]CreditCard](&updated)
+			assert.Nil(t, err)
+			assert.Equal(t, updated.CreditCards, creditCards)
+			assert.Equal(t, 1, len(updated.CreditCards))
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
+		})
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		ctx := context.Background()
+
+		creditCards := []CreditCard{
+			{
+				Number: "123412341234",
+			},
+			{
+				Number: "000000000000",
+			},
+		}
+		reuben := User{
+			Name:        "reuben.b",
+			CreditCards: creditCards,
+		}
+		reuben, _ = userRepository.Create(ctx, reuben)
+
+		found, _ := userRepository.FindOne(ctx, reuben.ID)
+
+		err := userRepository.Delete(ctx, found) // soft delete
+		assert.Nil(t, err)
+
+		_, err = userRepository.FindOne(ctx, reuben.ID)
+		assert.ErrorIs(t, data.NotFoundError, err)
+
+		var cards []CreditCard
+		result := db.Model(&[]CreditCard{}).Where("user_id = ? ", reuben.ID).Find(&cards)
+		assert.Nil(t, result.Error)
+		assert.Empty(t, cards)
+	})
+
+	db.Migrator().DropTable(&User{})
+	db.Migrator().DropTable(&CreditCard{})
+}
+
 func TestGormRepositoryAssociations_HasMany(t *testing.T) {
 	// User has many CreditCards, UserID is the foreign key
 	type CreditCard struct {
@@ -709,12 +1052,117 @@ func TestGormRepositoryAssociations_HasMany(t *testing.T) {
 	db.Migrator().DropTable(&CreditCard{})
 }
 
+func TestGormRepositoryAssociations_Lazy_ManyToMany(t *testing.T) {
+	// User has and belongs to many languages, `user_languages` is the join table
+	type Language struct {
+		ID        uint
+		Name      string
+		CreatedAt time.Time
+		DeletedAt gorm.DeletedAt `gorm:"index"`
+	}
+	type User struct {
+		data.LazyLoader `gorm:"-"`
+		gorm.Model
+		Name      string
+		Languages []Language `gorm:"many2many:user_languages;" fetch:"lazy"`
+	}
+	db := getGormDB()
+	db.AutoMigrate(&Language{})
+	db.AutoMigrate(&User{})
+
+	languageRepository := data.NewGormRepository[Language, uint](db)
+	userRepository := data.NewGormRepository[User, uint](db)
+
+	ctx := context.Background()
+
+	languages := []Language{
+		{
+			Name: "kr",
+		},
+		{
+			Name: "en",
+		},
+	}
+	var languagesCreated []Language
+	for _, language := range languages {
+		created, err := languageRepository.Create(ctx, language)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, created.ID)
+		languagesCreated = append(languagesCreated, created)
+	}
+
+	t.Run("create", func(t *testing.T) {
+		ctx := context.Background()
+		reuben := User{
+			Name: "reuben.b",
+			Languages: []Language{
+				languagesCreated[0],
+				languagesCreated[1],
+			},
+		}
+		created, err := userRepository.Create(ctx, reuben)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, created.ID)
+		assert.Equal(t, 2, len(created.Languages))
+		assert.NotEmpty(t, created.Languages[0])
+		assert.NotEmpty(t, created.Languages[1])
+
+		found, err := userRepository.FindOne(ctx, created.ID)
+		assert.Nil(t, err)
+
+		languages, err := data.LazyLoadNow[[]Language](&found)
+		assert.Nil(t, err)
+		assert.Equal(t, created.Languages, languages)
+	})
+
+	t.Run("update field", func(t *testing.T) {
+		t.Run("name field without lazy load", func(t *testing.T) {
+		})
+
+		t.Run("name field after lazy load", func(t *testing.T) {
+		})
+		t.Run("hasOne field before lazy load - success", func(t *testing.T) {
+		})
+		t.Run("hasOne field after lazy load - success", func(t *testing.T) {
+		})
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		ctx := context.Background()
+		reuben := User{
+			Name: "reuben.b",
+			Languages: []Language{
+				languagesCreated[0],
+				languagesCreated[1],
+			},
+		}
+		created, _ := userRepository.Create(ctx, reuben)
+		found, _ := userRepository.FindOne(ctx, created.ID)
+
+		err := userRepository.Delete(ctx, found)
+		assert.Nil(t, err)
+
+		_, err = userRepository.FindOne(ctx, created.ID)
+		assert.ErrorIs(t, data.NotFoundError, err)
+
+		var languages []Language
+		result := db.Unscoped().Table("user_languages").Where("user_id = ?", created.ID).Find(&languages)
+		assert.Nil(t, result.Error)
+		assert.Equal(t, int64(0), result.RowsAffected)
+
+	})
+	db.Migrator().DropTable(&User{})
+	db.Migrator().DropTable(&Language{})
+}
+
 func TestGormRepositoryAssociations_ManyToMany(t *testing.T) {
 	// User has and belongs to many languages, `user_languages` is the join table
 	type Language struct {
-		gorm.Model
+		ID   uint
 		Name string
 		//Users []User `gorm:"many2many:user_languages;" fetch:"eager"`
+		CreatedAt time.Time
+		DeletedAt gorm.DeletedAt `gorm:"index"`
 	}
 	type User struct {
 		gorm.Model

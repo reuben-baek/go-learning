@@ -3,7 +3,7 @@ package infra
 import (
 	"context"
 	"github.com/reuben-baek/go-learning/e-domain/data"
-	"github.com/reuben-baek/go-learning/e-domain/data-example/belong-to/domain"
+	"github.com/reuben-baek/go-learning/e-domain/data-example/interface-entity/domain"
 )
 
 type ProductRepository struct {

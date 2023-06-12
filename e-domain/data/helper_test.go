@@ -74,30 +74,177 @@ func TestFindID(t *testing.T) {
 }
 
 func TestFindAssociations(t *testing.T) {
-	type Order struct {
-		ID   int
-		Name string
-	}
-	type User struct {
-		gorm.Model
-		Name   string
-		Orders []Order `fetch:"eager"`
-	}
+	t.Run("eager", func(t *testing.T) {
+		t.Run("1:1 cardinality", func(t *testing.T) {
+			type Order struct {
+				ID   int
+				Name string
+			}
+			type User struct {
+				gorm.Model
+				Name  string
+				Order Order `fetch:"eager"`
+			}
 
-	user := User{
-		Model: gorm.Model{
-			ID: 1,
-		},
-		Name: "reuben",
-		Orders: []Order{
-			{
-				ID:   1,
-				Name: "order-1",
-			},
-		},
-	}
-	associations := findAssociations[User](user)
-	assert.Equal(t, 1, len(associations))
+			user := User{
+				Model: gorm.Model{
+					ID: 1,
+				},
+				Name: "reuben",
+				Order: Order{
+					ID:   1,
+					Name: "order-1",
+				},
+			}
+
+			expected := []Association{
+				{
+					Name:       "Order",
+					Value:      user.Order,
+					ID:         nil,
+					ForeignKey: "",
+					Type:       BelongTo,
+					FetchMode:  FetchEagerMode,
+				},
+			}
+			associations := findAssociations[User](user)
+			assert.Equal(t, expected, associations)
+		})
+		t.Run("1:n cardinality", func(t *testing.T) {
+			type Order struct {
+				ID   int
+				Name string
+			}
+			type User struct {
+				gorm.Model
+				Name   string
+				Orders []Order `fetch:"eager"`
+			}
+
+			user := User{
+				Model: gorm.Model{
+					ID: 1,
+				},
+				Name: "reuben",
+				Orders: []Order{
+					{
+						ID:   1,
+						Name: "order-1",
+					},
+				},
+			}
+
+			expected := []Association{
+				{
+					Name:       "Orders",
+					Value:      user.Orders,
+					ID:         nil,
+					ForeignKey: "",
+					Type:       HasMany,
+					FetchMode:  FetchEagerMode,
+				},
+			}
+			associations := findAssociations[User](user)
+			assert.Equal(t, expected, associations)
+		})
+	})
+	t.Run("lazy", func(t *testing.T) {
+		t.Run("belong-to", func(t *testing.T) {
+			type Company struct {
+				ID int
+			}
+			type User struct {
+				LazyLoader `gorm:"-"`
+				gorm.Model
+				Name      string
+				CompanyID int
+				Company   Company `fetch:"lazy"`
+			}
+
+			reuben := User{
+				Model: gorm.Model{
+					ID: 1,
+				},
+				Name:      "reuben",
+				CompanyID: 1,
+			}
+			expected := []Association{
+				{
+					Name:       "Company",
+					Value:      &Company{},
+					ID:         1,
+					ForeignKey: "",
+					Type:       BelongTo,
+					FetchMode:  FetchLazyMode,
+				},
+			}
+			associations := findAssociations[User](reuben)
+
+			assert.Equal(t, expected, associations)
+		})
+		t.Run("one-to-one", func(t *testing.T) {
+			type CreditCard struct {
+				ID     int
+				UserID uint
+			}
+			type User struct {
+				LazyLoader `gorm:"-"`
+				gorm.Model
+				Name       string
+				CreditCard CreditCard `fetch:"lazy"`
+			}
+
+			reuben := User{
+				Model: gorm.Model{
+					ID: 1,
+				},
+				Name: "reuben",
+			}
+			expected := []Association{
+				{
+					Name:       "CreditCard",
+					Value:      &CreditCard{},
+					ForeignKey: "UserID",
+					Type:       HasOne,
+					FetchMode:  FetchLazyMode,
+				},
+			}
+			associations := findAssociations[User](reuben)
+
+			assert.Equal(t, expected, associations)
+		})
+		t.Run("one-to-many", func(t *testing.T) {
+			type CreditCard struct {
+				ID     int
+				UserID uint
+			}
+			type User struct {
+				LazyLoader `gorm:"-"`
+				gorm.Model
+				Name        string
+				CreditCards []CreditCard `fetch:"lazy"`
+			}
+
+			reuben := User{
+				Model: gorm.Model{
+					ID: 1,
+				},
+				Name: "reuben",
+			}
+			expected := []Association{
+				{
+					Name:       "CreditCards",
+					Value:      []CreditCard(nil),
+					ForeignKey: "UserID",
+					Type:       HasMany,
+					FetchMode:  FetchLazyMode,
+				},
+			}
+			associations := findAssociations[User](reuben)
+
+			assert.Equal(t, expected, associations)
+		})
+	})
 }
 
 func TestFindLazyEntity(t *testing.T) {

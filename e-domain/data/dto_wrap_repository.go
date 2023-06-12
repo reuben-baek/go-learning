@@ -2,7 +2,6 @@ package data
 
 import (
 	"context"
-	"gorm.io/gorm"
 )
 
 type DTO[M any] interface {
@@ -17,16 +16,6 @@ type DtoWrapRepository[D DTO[M], M any, ID comparable] struct {
 func (d *DtoWrapRepository[D, M, ID]) FindOne(ctx context.Context, id ID) (M, error) {
 	dto, err := d.dtoRepository.FindOne(ctx, id)
 	return dto.To(), err
-}
-
-func (d *DtoWrapRepository[D, M, ID]) FindBy(ctx context.Context, belongTo any) ([]M, error) {
-	dtos, err := d.dtoRepository.FindBy(ctx, belongTo)
-
-	models := make([]M, 0, len(dtos))
-	for _, v := range dtos {
-		models = append(models, v.To())
-	}
-	return models, err
 }
 
 func (d *DtoWrapRepository[D, M, ID]) Create(ctx context.Context, entity M) (M, error) {
@@ -56,8 +45,22 @@ func NewDtoWrapRepository[D DTO[M], M any, ID comparable](dtoRepository Reposito
 	}
 }
 
-func NewGormDtoWrapRepository[D DTO[M], M any, ID comparable](db *gorm.DB) *DtoWrapRepository[D, M, ID] {
-	return &DtoWrapRepository[D, M, ID]{
-		dtoRepository: NewGormRepository[D, ID](db),
+type DtoWrapBelongToRepository[D DTO[M], M any, E DTO[S], S any] struct {
+	dtoRepository BelongToRepository[D, E]
+}
+
+func NewDtoWrapBelongToRepository[D DTO[M], M any, E DTO[S], S any](dtoRepository BelongToRepository[D, E]) *DtoWrapBelongToRepository[D, M, E, S] {
+	return &DtoWrapBelongToRepository[D, M, E, S]{dtoRepository: dtoRepository}
+}
+
+func (d *DtoWrapBelongToRepository[D, M, E, S]) FindBy(ctx context.Context, belongTo S) ([]M, error) {
+	var dto E
+	dto = dto.From(belongTo).(E)
+	dtos, err := d.dtoRepository.FindBy(ctx, dto)
+
+	models := make([]M, 0, len(dtos))
+	for _, v := range dtos {
+		models = append(models, v.To())
 	}
+	return models, err
 }

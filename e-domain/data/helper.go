@@ -6,12 +6,16 @@ import (
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"reflect"
+	"strings"
 )
 
 var NotFoundError = errors.New("not found")
 
 func findID[T any, ID comparable](entity T) (ID, bool) {
 	valueOfEntity := reflect.ValueOf(entity)
+	if valueOfEntity.Type().Kind() == reflect.Pointer {
+		valueOfEntity = reflect.Indirect(valueOfEntity)
+	}
 	value := valueOfEntity.FieldByName("ID")
 	if !value.IsValid() {
 		panic(fmt.Sprintf("Entity '%s' has not ID field", valueOfEntity.Type()))
@@ -30,6 +34,9 @@ func findID[T any, ID comparable](entity T) (ID, bool) {
 
 func findValue(entity any, fieldName string) any {
 	valueOfEntity := reflect.ValueOf(entity)
+	if valueOfEntity.Type().Kind() == reflect.Pointer {
+		valueOfEntity = reflect.Indirect(valueOfEntity)
+	}
 	value := valueOfEntity.FieldByName(fieldName)
 	if !value.IsValid() {
 		panic(fmt.Sprintf("Entity '%s' has not %s field", valueOfEntity.Type(), fieldName))
@@ -55,11 +62,22 @@ func ToFetchMode(m string) FetchMode {
 	}
 }
 
+type AssociationType int
+
+const (
+	BelongTo AssociationType = iota + 1
+	HasOne
+	HasMany
+	ManyToMany
+)
+
 type Association struct {
-	Name      string
-	Value     any
-	ID        any
-	FetchMode FetchMode
+	Name       string
+	Value      any
+	ID         any
+	ForeignKey string
+	Type       AssociationType
+	FetchMode  FetchMode
 }
 
 var systemStructTypes = []any{
@@ -81,36 +99,70 @@ func isSystemStructType(typeName string) bool {
 	return systemStructTypeMap[typeName]
 }
 
+func toSnakeCase(camel string) string {
+	var b strings.Builder
+	diff := 'a' - 'A'
+	l := len(camel)
+	for i, v := range camel {
+		// A is 65, a is 97
+		if v >= 'a' {
+			b.WriteRune(v)
+			continue
+		}
+		if (i != 0 || i == l-1) && (          // head and tail
+		(i > 0 && rune(camel[i-1]) >= 'a') || // pre
+			(i < l-1 && rune(camel[i+1]) >= 'a')) { //next
+			b.WriteRune('_')
+		}
+		b.WriteRune(v + diff)
+	}
+	return b.String()
+}
+
 func findAssociations[T any](entity T) []Association {
 	var associations []Association
-	valueOf := reflect.ValueOf(entity)
-	typeOf := reflect.TypeOf(entity)
+	entityValue := reflect.ValueOf(entity)
+	entityType := reflect.TypeOf(entity)
 
-	numOfField := valueOf.NumField()
+	numOfField := entityValue.NumField()
 	for i := 0; i < numOfField; i++ {
-		field := valueOf.Field(i)
+		field := entityValue.Field(i)
 		if field.Type().Kind() == reflect.Struct {
 			fieldType := field.Type().String()
+			fieldTypeName := field.Type().Name()
 			if !isSystemStructType(fieldType) {
-				fieldTypeName := field.Type().Name()
 				logrus.Debugf("findAssociation: field Name[%s], Type[%s], Value[%+v]", fieldTypeName, fieldType, field.Interface())
 
-				fetchMode := ToFetchMode(typeOf.Field(i).Tag.Get("fetch"))
+				fetchMode := ToFetchMode(entityType.Field(i).Tag.Get("fetch"))
 				switch fetchMode {
 				case FetchLazyMode:
-					v := reflect.New(field.Type())
-					associations = append(associations, Association{
-						Name:      fieldTypeName,
-						Value:     v.Interface(),
-						FetchMode: ToFetchMode(typeOf.Field(i).Tag.Get("fetch")),
-						ID:        findValue(entity, fmt.Sprintf("%sID", fieldTypeName)), // belongTo ID
-					})
+					fieldValue := reflect.New(field.Type())
+
+					belongToForeignKey := fmt.Sprintf("%sID", fieldTypeName)
+					oneToOneForeignKey := fmt.Sprintf("%sID", entityType.Name())
+					if entityValue.FieldByName(belongToForeignKey).IsValid() {
+						associations = append(associations, Association{
+							Name:      fieldTypeName,
+							Value:     fieldValue.Interface(),
+							FetchMode: FetchLazyMode,
+							ID:        findValue(entity, fmt.Sprintf("%sID", fieldTypeName)), // belongTo ID
+							Type:      BelongTo,
+						})
+					} else if reflect.Indirect(fieldValue).FieldByName(oneToOneForeignKey).IsValid() {
+						associations = append(associations, Association{
+							Name:       fieldTypeName,
+							Value:      fieldValue.Interface(),
+							FetchMode:  FetchLazyMode,
+							ForeignKey: toSnakeCase(oneToOneForeignKey), // belongTo ID
+							Type:       HasOne,
+						})
+					}
 				case FetchEagerMode:
-					v := reflect.New(field.Type())
 					associations = append(associations, Association{
 						Name:      fieldTypeName,
-						Value:     v.Interface(),
-						FetchMode: ToFetchMode(typeOf.Field(i).Tag.Get("fetch")),
+						Value:     field.Interface(),
+						FetchMode: ToFetchMode(entityType.Field(i).Tag.Get("fetch")),
+						Type:      BelongTo,
 					})
 				}
 			}
@@ -121,11 +173,37 @@ func findAssociations[T any](entity T) []Association {
 				fieldTypeName := elementType.Name()
 				logrus.Debugf("findAssocation: field Name=[%s], Type[%s], Value[%+v]", fieldTypeName, fieldType, field.Interface())
 
-				associations = append(associations, Association{
-					Name:      fieldTypeName + "s",
-					Value:     field.Interface(),
-					FetchMode: ToFetchMode(typeOf.Field(i).Tag.Get("fetch")),
-				})
+				fetchMode := ToFetchMode(entityType.Field(i).Tag.Get("fetch"))
+				switch fetchMode {
+				case FetchLazyMode:
+					fieldValue := reflect.New(field.Type())
+					foreignKey := fmt.Sprintf("%sID", entityType.Name())
+					if _, ok := elementType.FieldByName(foreignKey); ok {
+						associations = append(associations, Association{
+							Name:       fieldTypeName + "s",
+							Value:      fieldValue.Interface(),
+							FetchMode:  FetchLazyMode,
+							ForeignKey: toSnakeCase(foreignKey), // has-many foreign ID
+							Type:       HasMany,
+						})
+					} else {
+						associations = append(associations, Association{
+							Name:       fieldTypeName + "s",
+							Value:      fieldValue.Interface(),
+							FetchMode:  FetchLazyMode,
+							ForeignKey: toSnakeCase(foreignKey), // many-to-many foreign ID
+							Type:       ManyToMany,
+						})
+						//panic(fmt.Sprintf("findAssociations: foreignKey %s does not exist in %s", foreignKey, fieldType))
+					}
+				case FetchEagerMode:
+					associations = append(associations, Association{
+						Name:      fieldTypeName + "s",
+						Value:     field.Interface(),
+						FetchMode: ToFetchMode(entityType.Field(i).Tag.Get("fetch")),
+						Type:      HasMany,
+					})
+				}
 			}
 		}
 	}

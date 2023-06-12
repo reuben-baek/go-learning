@@ -17,7 +17,7 @@ type Product struct {
 }
 
 // ProductRepository is an example of belong-to or many-to-one association and lazy loading.
-// Refer its implementation and unit tests in f-repository-impl/product_repository_test.go.
+// Refer its implementation and unit tests in infra/product_repository_test.go.
 type ProductRepository interface {
 	data.Repository[Product, uint]
 	FindByCompany(ctx context.Context, company Company) ([]Product, error)
