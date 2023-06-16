@@ -36,7 +36,7 @@ func (p Product) To() domain.Product {
 		p.Name,
 		p.Weight,
 		data.LazyLoadFn[domain.Company](func() (any, error) {
-			if company, err := data.LazyLoadNow[Company](&p); err != nil {
+			if company, err := data.LazyLoadNow[Company]("Company", &p); err != nil {
 				return nil, err
 			} else {
 				return company.To(), nil

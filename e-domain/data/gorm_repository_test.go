@@ -41,7 +41,7 @@ func getGormDB() *gorm.DB {
 	return db
 }
 
-func TestGormRepositorySimpleModel(t *testing.T) {
+func TestGormRepository_Simple(t *testing.T) {
 	type User struct {
 		ID           uint
 		Name         string
@@ -55,7 +55,7 @@ func TestGormRepositorySimpleModel(t *testing.T) {
 	}
 }
 
-func TestGormRepositoryGormModel(t *testing.T) {
+func TestGormRepository_GormSimple(t *testing.T) {
 	type User struct {
 		gorm.Model
 		Name  string
@@ -63,7 +63,7 @@ func TestGormRepositoryGormModel(t *testing.T) {
 	}
 }
 
-func TestGormRepositoryEmbeddedModel(t *testing.T) {
+func TestGormRepository_Embedded(t *testing.T) {
 	type Author struct {
 		Name  string
 		Email string
@@ -73,22 +73,6 @@ func TestGormRepositoryEmbeddedModel(t *testing.T) {
 		Author  Author `gorm:"embedded"`
 		Upvotes int32
 	}
-}
-
-func LazyLoadableInstance(entity data.LazyLoadable) {
-	entity.NewInstance()
-}
-
-func TestLazyLoadable(t *testing.T) {
-	type User struct {
-		data.LazyLoader `gorm:"-"`
-		Name            string
-		CompanyID       int
-	}
-	user := User{}
-	LazyLoadableInstance(&user)
-	assert.NotNil(t, user.LazyLoader)
-
 }
 
 func TestGormRepository_GetLazyLoadFn(t *testing.T) {
@@ -122,11 +106,167 @@ func TestGormRepository_GetLazyLoadFn(t *testing.T) {
 	company := &Company{}
 	loadFn := userRepository.GetLazyLoadFuncOfBelongTo(ctx, company, int(1))
 
-	loadedCompany, _ := loadFn()
-	assert.Equal(t, 1, loadedCompany.(Company).ID)
+	loadedCompany, err := loadFn()
+	assert.Nil(t, err)
+	assert.Equal(t, 1, loadedCompany.(*Company).ID)
 }
 
-func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
+func TestGormRepository_SelfRef_Lazy(t *testing.T) {
+	type Category struct {
+		data.LazyLoader `gorm:"-"`
+		ID              uint
+		Name            string
+		ParentID        *uint
+		Parent          *Category `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	}
+	db := getGormDB()
+	db.AutoMigrate(&Category{})
+
+	categoryRepository := data.NewGormRepository[Category, uint](db)
+
+	t.Run("create", func(t *testing.T) {
+		ctx := context.Background()
+		computer := Category{
+			Name: "computer",
+		}
+		computer, err := categoryRepository.Create(ctx, computer)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, computer.ID)
+		assert.Empty(t, computer.ParentID)
+		assert.Empty(t, computer.Parent)
+
+		parentID := computer.ID
+		mac := Category{
+			Name:     "mac",
+			ParentID: &parentID,
+		}
+		mac, err = categoryRepository.Create(ctx, mac)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, mac.ID)
+		assert.Equal(t, parentID, *mac.ParentID)
+
+		found, err := categoryRepository.FindOne(ctx, mac.ID)
+		assert.Nil(t, err)
+		assert.Equal(t, mac.ID, found.ID)
+		assert.Equal(t, *mac.ParentID, *found.ParentID)
+		assert.Empty(t, found.Parent)
+
+		parent, err := data.LazyLoadNow[*Category]("Parent", &found)
+		assert.Nil(t, err)
+		assert.Equal(t, computer.ID, parent.ID)
+		assert.Equal(t, computer.Name, parent.Name)
+		assert.Empty(t, parent.Parent)
+	})
+	t.Run("update", func(t *testing.T) {
+		ctx := context.Background()
+		computer := Category{
+			Name: "computer",
+		}
+		computer, _ = categoryRepository.Create(ctx, computer)
+
+		apple := Category{
+			Name: "apple",
+		}
+		apple, _ = categoryRepository.Create(ctx, apple)
+
+		parentID := computer.ID
+		mac := Category{
+			Name:     "mac",
+			ParentID: &parentID,
+		}
+		mac, _ = categoryRepository.Create(ctx, mac)
+
+		t.Run("name before load", func(t *testing.T) {
+			found, _ := categoryRepository.FindOne(ctx, mac.ID)
+
+			found.Name = "mac-m2"
+			updated, err := categoryRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Equal(t, found.ID, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Equal(t, found.ParentID, updated.ParentID)
+
+			parent, err := data.LazyLoadNow[*Category]("Parent", &updated)
+			assert.Nil(t, err)
+			assert.Equal(t, computer.ID, updated.Parent.ID)
+			assert.Equal(t, computer.ID, updated.Parent.Name)
+			assert.Equal(t, computer.ID, updated.Parent.Name)
+			assert.Equal(t, updated.Parent, parent)
+
+			// rollback for next tests
+			categoryRepository.Update(ctx, mac)
+		})
+		t.Run("name after load", func(t *testing.T) {
+			found, _ := categoryRepository.FindOne(ctx, mac.ID)
+
+			parent, _ := data.LazyLoadNow[*Category]("Parent", &found)
+			assert.Equal(t, computer.ID, found.Parent.ID)
+
+			found.Name = "mac-m2"
+			updated, err := categoryRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Equal(t, found.ID, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Equal(t, found.ParentID, updated.ParentID)
+			assert.Empty(t, updated.Parent)
+
+			parent, err = data.LazyLoadNow[*Category]("Parent", &updated)
+			assert.Nil(t, err)
+			assert.Equal(t, computer.ID, parent.ID)
+			assert.Equal(t, computer.Name, parent.Name)
+			assert.Empty(t, parent.Parent)
+
+			// rollback for next tests
+			categoryRepository.Update(ctx, mac)
+		})
+		t.Run("parent", func(t *testing.T) {
+			found, _ := categoryRepository.FindOne(ctx, mac.ID)
+			appleID := apple.ID
+			found.ParentID = &appleID
+			updated, err := categoryRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Equal(t, found.ID, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Equal(t, found.ParentID, updated.ParentID)
+			assert.Empty(t, updated.Parent)
+
+			parent, err := data.LazyLoadNow[*Category]("Parent", &updated)
+			assert.Nil(t, err)
+			assert.Equal(t, updated.Parent, parent)
+			assert.Equal(t, apple.ID, updated.Parent.ID)
+			assert.Equal(t, apple.Name, updated.Parent.Name)
+			assert.Empty(t, updated.Parent.Parent)
+
+			// rollback for next tests
+			categoryRepository.Update(ctx, mac)
+		})
+	})
+	t.Run("delete", func(t *testing.T) {
+		ctx := context.Background()
+
+		computer := Category{
+			Name: "computer",
+		}
+		computer, _ = categoryRepository.Create(ctx, computer)
+
+		parentID := computer.ID
+		mac := Category{
+			Name:     "mac",
+			ParentID: &parentID,
+		}
+		mac, _ = categoryRepository.Create(ctx, mac)
+
+		found, _ := categoryRepository.FindOne(ctx, mac.ID)
+
+		err := categoryRepository.Delete(ctx, found)
+		assert.Nil(t, err)
+
+		_, err = categoryRepository.FindOne(ctx, mac.ID)
+		assert.Equal(t, data.NotFoundError, err)
+	})
+	db.Migrator().DropTable(&Category{})
+}
+func TestGormRepository_BelongTo_Lazy(t *testing.T) {
 	type Company struct {
 		ID   int
 		Name string
@@ -170,7 +310,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 		assert.Equal(t, created.CompanyID, found.CompanyID)
 		assert.Empty(t, found.Company)
 
-		company, err := data.LazyLoadNow[Company](&found)
+		company, err := data.LazyLoadNow[Company]("Company", &found)
 		assert.Nil(t, err)
 		assert.Equal(t, kakaoEnterpriseCreated, company)
 	})
@@ -200,7 +340,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 			assert.Equal(t, found.Name, updated.Name)
 			assert.Equal(t, found.CompanyID, updated.CompanyID)
 			assert.Empty(t, updated.Company)
-			company, err := data.LazyLoadNow[Company](&updated)
+			company, err := data.LazyLoadNow[Company]("Company", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoEnterpriseCreated, updated.Company)
 			assert.Equal(t, kakaoEnterpriseCreated, company)
@@ -210,7 +350,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 		})
 		t.Run("name field after lazy load", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
-			company, err := data.LazyLoadNow[Company](&found)
+			company, err := data.LazyLoadNow[Company]("Company", &found)
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoEnterpriseCreated, found.Company)
 			assert.Equal(t, kakaoEnterpriseCreated, company)
@@ -233,7 +373,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 			assert.Equal(t, found.Name, updated.Name)
 			assert.Equal(t, found.CompanyID, updated.CompanyID)
 			assert.Empty(t, updated.Company)
-			company, err := data.LazyLoadNow[Company](&updated)
+			company, err := data.LazyLoadNow[Company]("Company", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoCloudCreated, updated.Company)
 			assert.Equal(t, updated.Company, company)
@@ -244,7 +384,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
 			require.Equal(t, kakaoEnterpriseCreated.ID, found.CompanyID)
 
-			company, err := data.LazyLoadNow[Company](&found)
+			company, err := data.LazyLoadNow[Company]("Company", &found)
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoEnterpriseCreated, found.Company)
 			assert.Equal(t, kakaoEnterpriseCreated, company)
@@ -262,7 +402,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
 			require.Equal(t, kakaoEnterpriseCreated.ID, found.CompanyID)
 
-			company, err := data.LazyLoadNow[Company](&found)
+			company, err := data.LazyLoadNow[Company]("Company", &found)
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoEnterpriseCreated, found.Company)
 			assert.Equal(t, kakaoEnterpriseCreated, company)
@@ -274,7 +414,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 			assert.Equal(t, found.CompanyID, updated.CompanyID)
 			assert.Empty(t, updated.Company)
 
-			company, err = data.LazyLoadNow[Company](&updated)
+			company, err = data.LazyLoadNow[Company]("Company", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoCloudCreated, updated.Company)
 			assert.Equal(t, updated.Company, company)
@@ -291,7 +431,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoCloudCreated.ID, updated.CompanyID)
 			assert.Empty(t, updated.Company)
-			company, err := data.LazyLoadNow[Company](&updated)
+			company, err := data.LazyLoadNow[Company]("Company", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoCloudCreated, updated.Company)
 			assert.Equal(t, updated.Company, company)
@@ -303,7 +443,7 @@ func TestGormRepositoryAssociations_Lazy_BelongTo(t *testing.T) {
 	db.Migrator().DropTable(&User{})
 }
 
-func TestGormRepositoryAssociations_BelongsTo(t *testing.T) {
+func TestGormRepository_BelongTo_Eager(t *testing.T) {
 	// `User` belongs to `Company`, `CompanyID` is the foreign key
 	type Company struct {
 		ID   int
@@ -444,7 +584,7 @@ func TestGormRepositoryAssociations_BelongsTo(t *testing.T) {
 	db.Migrator().DropTable(&Company{})
 }
 
-func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
+func TestGormRepository_HasOne_Lazy(t *testing.T) {
 	// User has one CreditCard, UserID is the foreign key
 	type CreditCard struct {
 		gorm.Model
@@ -484,7 +624,7 @@ func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, created.ID, found.ID)
 		assert.Empty(t, found.CreditCard)
-		creditCard, err := data.LazyLoadNow[CreditCard](&found)
+		creditCard, err := data.LazyLoadNow[CreditCard]("CreditCard", &found)
 		assert.Nil(t, err)
 		assert.Equal(t, created.CreditCard, creditCard)
 	})
@@ -510,7 +650,7 @@ func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
 			assert.Equal(t, found.Name, updated.Name)
 			assert.Empty(t, updated.CreditCard)
 
-			creditCard, err := data.LazyLoadNow[CreditCard](&updated)
+			creditCard, err := data.LazyLoadNow[CreditCard]("CreditCard", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, reuben.CreditCard, creditCard)
 
@@ -519,7 +659,7 @@ func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
 		})
 		t.Run("name field after lazy load", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
-			creditCard, err := data.LazyLoadNow[CreditCard](&found)
+			creditCard, err := data.LazyLoadNow[CreditCard]("CreditCard", &found)
 			assert.Nil(t, err)
 			assert.NotEmpty(t, found.CreditCard)
 			assert.Equal(t, found.CreditCard, creditCard)
@@ -542,7 +682,7 @@ func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
 			assert.Nil(t, err)
 			assert.Empty(t, updated.CreditCard)
 
-			creditCard, err := data.LazyLoadNow[CreditCard](&updated)
+			creditCard, err := data.LazyLoadNow[CreditCard]("CreditCard", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, updated.CreditCard, creditCard)
 			assert.NotEmpty(t, updated.CreditCard.ID)
@@ -554,7 +694,7 @@ func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
 		t.Run("hasOne field after lazy load - success", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
 
-			creditCard, err := data.LazyLoadNow[CreditCard](&found)
+			creditCard, err := data.LazyLoadNow[CreditCard]("CreditCard", &found)
 			assert.Nil(t, err)
 			assert.NotEmpty(t, found.CreditCard)
 			assert.Equal(t, found.CreditCard, creditCard)
@@ -565,7 +705,7 @@ func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
 			assert.Nil(t, err)
 			assert.Empty(t, updated.CreditCard)
 
-			creditCard, err = data.LazyLoadNow[CreditCard](&updated)
+			creditCard, err = data.LazyLoadNow[CreditCard]("CreditCard", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, found.CreditCard.Number, updated.CreditCard.Number)
 			assert.NotEmpty(t, updated.CreditCard.ID)
@@ -603,7 +743,7 @@ func TestGormRepositoryAssociations_Lazy_HasOne(t *testing.T) {
 	db.Migrator().DropTable(&User{})
 	db.Migrator().DropTable(&CreditCard{})
 }
-func TestGormRepositoryAssociations_HasOne(t *testing.T) {
+func TestGormRepository_HasOne_Eager(t *testing.T) {
 	// User has one CreditCard, UserID is the foreign key
 	type CreditCard struct {
 		gorm.Model
@@ -723,7 +863,7 @@ func TestGormRepositoryAssociations_HasOne(t *testing.T) {
 	db.Migrator().DropTable(&CreditCard{})
 }
 
-func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
+func TestGormRepository_HasMany_Lazy(t *testing.T) {
 	// User has many CreditCards, UserID is the foreign key
 	type CreditCard struct {
 		gorm.Model
@@ -769,7 +909,7 @@ func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
 		assert.NotEmpty(t, found.ID)
 		assert.Equal(t, 0, len(found.CreditCards))
 
-		foundCreditCards, err := data.LazyLoadNow[[]CreditCard](&found)
+		foundCreditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &found)
 		assert.Nil(t, err)
 		assert.Equal(t, created.CreditCards, foundCreditCards)
 	})
@@ -801,7 +941,7 @@ func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
 			assert.Equal(t, found.Name, updated.Name)
 			assert.Empty(t, updated.CreditCards)
 
-			creditCards, err := data.LazyLoadNow[[]CreditCard](&updated)
+			creditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, reuben.CreditCards, creditCards)
 
@@ -811,7 +951,7 @@ func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
 
 		t.Run("name field after lazy load", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
-			creditCards, err := data.LazyLoadNow[[]CreditCard](&found)
+			creditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &found)
 			assert.Nil(t, err)
 			assert.NotEmpty(t, found.CreditCards)
 			assert.Equal(t, found.CreditCards, creditCards)
@@ -825,7 +965,7 @@ func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
 			// rollback for next tests
 			userRepository.Update(ctx, reuben)
 		})
-		t.Run("hasOne field before lazy load - success", func(t *testing.T) {
+		t.Run("hasMany field before lazy load - success", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
 
 			found.CreditCards = []CreditCard{
@@ -838,7 +978,7 @@ func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
 			assert.Nil(t, err)
 			assert.Empty(t, updated.CreditCards)
 
-			creditCards, err := data.LazyLoadNow[[]CreditCard](&updated)
+			creditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, updated.CreditCards, creditCards)
 			assert.Equal(t, 1, len(updated.CreditCards))
@@ -846,9 +986,9 @@ func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
 			// rollback for next tests
 			userRepository.Update(ctx, reuben)
 		})
-		t.Run("hasOne field after lazy load - success", func(t *testing.T) {
+		t.Run("hasMany field after lazy load - success", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
-			data.LazyLoadNow[[]CreditCard](&found)
+			data.LazyLoadNow[[]CreditCard]("CreditCards", &found)
 
 			found.CreditCards = []CreditCard{
 				{
@@ -860,7 +1000,7 @@ func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
 			assert.Nil(t, err)
 			assert.Empty(t, updated.CreditCards)
 
-			creditCards, err := data.LazyLoadNow[[]CreditCard](&updated)
+			creditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, updated.CreditCards, creditCards)
 			assert.Equal(t, 1, len(updated.CreditCards))
@@ -905,7 +1045,7 @@ func TestGormRepositoryAssociations_Lazy_HasMany(t *testing.T) {
 	db.Migrator().DropTable(&CreditCard{})
 }
 
-func TestGormRepositoryAssociations_HasMany(t *testing.T) {
+func TestGormRepository_HasMany_Eager(t *testing.T) {
 	// User has many CreditCards, UserID is the foreign key
 	type CreditCard struct {
 		gorm.Model
@@ -1052,7 +1192,7 @@ func TestGormRepositoryAssociations_HasMany(t *testing.T) {
 	db.Migrator().DropTable(&CreditCard{})
 }
 
-func TestGormRepositoryAssociations_Lazy_ManyToMany(t *testing.T) {
+func TestGormRepository_ManyToMany_Lazy(t *testing.T) {
 	// User has and belongs to many languages, `user_languages` is the join table
 	type Language struct {
 		ID        uint
@@ -1082,6 +1222,9 @@ func TestGormRepositoryAssociations_Lazy_ManyToMany(t *testing.T) {
 		{
 			Name: "en",
 		},
+		{
+			Name: "ch",
+		},
 	}
 	var languagesCreated []Language
 	for _, language := range languages {
@@ -1110,20 +1253,93 @@ func TestGormRepositoryAssociations_Lazy_ManyToMany(t *testing.T) {
 		found, err := userRepository.FindOne(ctx, created.ID)
 		assert.Nil(t, err)
 
-		languages, err := data.LazyLoadNow[[]Language](&found)
+		languages, err := data.LazyLoadNow[[]Language]("Languages", &found)
 		assert.Nil(t, err)
 		assert.Equal(t, created.Languages, languages)
 	})
 
 	t.Run("update field", func(t *testing.T) {
+		ctx := context.Background()
+		reuben := User{
+			Name: "reuben.b",
+			Languages: []Language{
+				languagesCreated[0],
+				languagesCreated[1],
+			},
+		}
+		reuben, _ = userRepository.Create(ctx, reuben)
 		t.Run("name field without lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			found.Name = "reuben.baek"
+			updated, err := userRepository.Update(ctx, found)
+
+			assert.Nil(t, err)
+			assert.NotEmpty(t, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Empty(t, updated.Languages)
+
+			languages, err := data.LazyLoadNow[[]Language]("Languages", &updated)
+			assert.Nil(t, err)
+			assert.Equal(t, reuben.Languages, languages)
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
 		})
 
 		t.Run("name field after lazy load", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			languages, err := data.LazyLoadNow[[]Language]("Languages", &found)
+			assert.Nil(t, err)
+			assert.NotEmpty(t, found.Languages)
+			assert.Equal(t, found.Languages, languages)
+
+			found.Name = "reuben.baek"
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.NotEmpty(t, updated.ID)
+			assert.Equal(t, found.Name, updated.Name)
+			assert.Empty(t, updated.Languages)
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
 		})
-		t.Run("hasOne field before lazy load - success", func(t *testing.T) {
+		t.Run("many-to-many field before lazy load - success", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+
+			found.Languages = []Language{
+				languagesCreated[2],
+			}
+
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Empty(t, updated.Languages)
+
+			languages, err := data.LazyLoadNow[[]Language]("Languages", &updated)
+			assert.Nil(t, err)
+			assert.Equal(t, updated.Languages, languages)
+			assert.Equal(t, 1, len(updated.Languages))
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
 		})
-		t.Run("hasOne field after lazy load - success", func(t *testing.T) {
+		t.Run("many-to-many field after lazy load - success", func(t *testing.T) {
+			found, _ := userRepository.FindOne(ctx, reuben.ID)
+			data.LazyLoadNow[[]Language]("Languages", &found)
+
+			found.Languages = []Language{
+				languagesCreated[2],
+			}
+
+			updated, err := userRepository.Update(ctx, found)
+			assert.Nil(t, err)
+			assert.Empty(t, updated.Languages)
+
+			languages, err := data.LazyLoadNow[[]Language]("Languages", &updated)
+			assert.Nil(t, err)
+			assert.Equal(t, updated.Languages, languages)
+			assert.Equal(t, 1, len(updated.Languages))
+
+			// rollback for next tests
+			userRepository.Update(ctx, reuben)
 		})
 	})
 
@@ -1155,7 +1371,7 @@ func TestGormRepositoryAssociations_Lazy_ManyToMany(t *testing.T) {
 	db.Migrator().DropTable(&Language{})
 }
 
-func TestGormRepositoryAssociations_ManyToMany(t *testing.T) {
+func TestGormRepository_ManyToMany_Eager(t *testing.T) {
 	// User has and belongs to many languages, `user_languages` is the join table
 	type Language struct {
 		ID   uint

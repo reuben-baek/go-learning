@@ -149,6 +149,64 @@ func TestFindAssociations(t *testing.T) {
 		})
 	})
 	t.Run("lazy", func(t *testing.T) {
+		t.Run("self-referential", func(t *testing.T) {
+			t.Run("empty", func(t *testing.T) {
+				type Category struct {
+					ID       int
+					Name     string
+					ParentID *int
+					Parent   *Category
+				}
+
+				computer := Category{
+					ID:       1,
+					Name:     "computer",
+					ParentID: nil,
+					Parent:   nil,
+				}
+				expected := []Association{
+					{
+						Name:       "Parent",
+						Value:      &Category{},
+						ID:         nil,
+						ForeignKey: "",
+						Type:       BelongTo,
+						FetchMode:  FetchLazyMode,
+					},
+				}
+				associations := findAssociations[Category](computer)
+
+				assert.Equal(t, expected, associations)
+			})
+			t.Run("not empty", func(t *testing.T) {
+				type Category struct {
+					ID       int
+					Name     string
+					ParentID *int
+					Parent   *Category
+				}
+				deviceID := 1
+				computer := Category{
+					ID:       2,
+					Name:     "computer",
+					ParentID: &deviceID,
+					Parent:   nil,
+				}
+				expected := []Association{
+					{
+						Name:       "Parent",
+						Value:      &Category{},
+						ID:         &deviceID,
+						ForeignKey: "",
+						Type:       BelongTo,
+						FetchMode:  FetchLazyMode,
+					},
+				}
+				associations := findAssociations[Category](computer)
+
+				assert.Equal(t, expected, associations)
+			})
+		})
 		t.Run("belong-to", func(t *testing.T) {
 			type Company struct {
 				ID int
@@ -204,7 +262,7 @@ func TestFindAssociations(t *testing.T) {
 				{
 					Name:       "CreditCard",
 					Value:      &CreditCard{},
-					ForeignKey: "UserID",
+					ForeignKey: "user_id",
 					Type:       HasOne,
 					FetchMode:  FetchLazyMode,
 				},
@@ -235,7 +293,7 @@ func TestFindAssociations(t *testing.T) {
 				{
 					Name:       "CreditCards",
 					Value:      []CreditCard(nil),
-					ForeignKey: "UserID",
+					ForeignKey: "user_id",
 					Type:       HasMany,
 					FetchMode:  FetchLazyMode,
 				},
@@ -278,20 +336,24 @@ func TestFindLazyEntity(t *testing.T) {
 	}
 	expected := []Association{
 		{
-			Name:      "Company",
-			Value:     &Company{},
-			FetchMode: FetchLazyMode,
-			ID:        "1",
+			Name:       "Company",
+			Value:      &Company{},
+			ID:         "1",
+			ForeignKey: "",
+			Type:       BelongTo,
+			FetchMode:  FetchLazyMode,
 		},
 		{
 			Name:      "Role",
-			Value:     &Role{},
+			Value:     Role{},
 			FetchMode: FetchEagerMode,
+			Type:      BelongTo,
 		},
 		{
 			Name:      "Orders",
 			Value:     []Order(nil),
 			FetchMode: FetchEagerMode,
+			Type:      HasMany,
 		},
 	}
 	associations := findAssociations[User](reuben)

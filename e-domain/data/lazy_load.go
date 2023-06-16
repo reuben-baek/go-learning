@@ -6,6 +6,10 @@ import (
 	"sync"
 )
 
+type Lazy[T any] interface {
+	Get() T
+}
+
 type LazyLoad[T any] struct {
 	m      sync.Mutex
 	done   bool
@@ -30,9 +34,17 @@ func (l *LazyLoad[T]) Get() T {
 	if l.done {
 		return l.value
 	}
+	if l.loadFn == nil {
+		l.done = true
+		return l.value
+	}
 	var value any
 	var ok bool
 	value, l.err = l.loadFn()
+	if l.err != nil {
+		l.done = true
+		return l.value
+	}
 	l.value, ok = value.(T)
 	if !ok {
 		panic(fmt.Sprintf("LazyLoad got %s, not %s", reflect.TypeOf(value), reflect.TypeOf(l.value)))

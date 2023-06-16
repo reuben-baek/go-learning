@@ -3,8 +3,8 @@ package infra_test
 import (
 	"context"
 	"github.com/reuben-baek/go-learning/e-domain/data"
-	"github.com/reuben-baek/go-learning/e-domain/data-example/belong-to/domain"
-	"github.com/reuben-baek/go-learning/e-domain/data-example/belong-to/infra"
+	"github.com/reuben-baek/go-learning/e-domain/data-example/struct-entity/domain"
+	"github.com/reuben-baek/go-learning/e-domain/data-example/struct-entity/infra"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -29,16 +29,22 @@ func TestProductRepository(t *testing.T) {
 
 	db.AutoMigrate(&infra.Product{})
 	db.AutoMigrate(&infra.Company{})
+	db.AutoMigrate(&infra.Category{})
 
 	companyGormRepository := data.NewGormRepository[infra.Company, uint](db)
 	productGormRepository := data.NewGormRepository[infra.Product, uint](db)
+	categoryGormRepository := data.NewGormRepository[infra.Category, uint](db)
 
 	companyRepository := data.NewDtoWrapRepository[infra.Company, domain.Company, uint](companyGormRepository)
+	categoryRepository := data.NewDtoWrapRepository[infra.Category, domain.Category, uint](categoryGormRepository)
 
 	productRepository := infra.NewProductRepository(
 		data.NewDtoWrapRepository[infra.Product, domain.Product, uint](productGormRepository),
 		data.NewDtoWrapBelongToRepository[infra.Product, domain.Product, infra.Company, domain.Company](
 			data.NewGormBelongToRepository[infra.Product, infra.Company, uint](productGormRepository),
+		),
+		data.NewDtoWrapBelongToRepository[infra.Product, domain.Product, infra.Category, domain.Category](
+			data.NewGormBelongToRepository[infra.Product, infra.Category, uint](productGormRepository),
 		),
 	)
 
@@ -52,11 +58,16 @@ func TestProductRepository(t *testing.T) {
 	}
 	kakaoCloud, err = companyRepository.Create(ctx, kakaoCloud)
 
+	computer := domain.Category{
+		Name: "computer",
+	}
+	computer, err = categoryRepository.Create(ctx, computer)
+
 	t.Run("create & find", func(t *testing.T) {
 		macM1 := domain.Product{
-			Name:    "macM1",
-			Weight:  1000,
-			Company: data.LazyLoadValue(kakaoEnterprise),
+			Name:     "macM1",
+			Category: data.LazyLoadValue(computer),
+			Company:  data.LazyLoadValue(kakaoEnterprise),
 		}
 		macM1, err = productRepository.Create(ctx, macM1)
 		assert.Nil(t, err)
@@ -77,13 +88,20 @@ func TestProductRepository(t *testing.T) {
 			assert.Equal(t, macM1.ID, products[0].ID)
 			assert.Equal(t, kakaoEnterprise, products[0].Company.Get())
 		})
+		t.Run("find-by-category", func(t *testing.T) {
+			products, err := productRepository.FindByCategory(ctx, computer)
+			assert.Nil(t, err)
+			assert.Equal(t, 1, len(products))
+			assert.Equal(t, macM1.ID, products[0].ID)
+			assert.Equal(t, kakaoEnterprise, products[0].Company.Get())
+		})
 	})
 
 	t.Run("update product name", func(t *testing.T) {
 		bareMetal := domain.Product{
-			Name:    "bare metal",
-			Weight:  1000,
-			Company: data.LazyLoadValue(kakaoEnterprise),
+			Name:     "bare metal",
+			Category: data.LazyLoadValue(computer),
+			Company:  data.LazyLoadValue(kakaoEnterprise),
 		}
 		bareMetal, err = productRepository.Create(ctx, bareMetal)
 		assert.Nil(t, err)
@@ -107,9 +125,9 @@ func TestProductRepository(t *testing.T) {
 
 	t.Run("update product company", func(t *testing.T) {
 		bareMetal := domain.Product{
-			Name:    "bare metal",
-			Weight:  1000,
-			Company: data.LazyLoadValue(kakaoEnterprise),
+			Name:     "bare metal",
+			Category: data.LazyLoadValue(computer),
+			Company:  data.LazyLoadValue(kakaoEnterprise),
 		}
 		bareMetal, err = productRepository.Create(ctx, bareMetal)
 		assert.Nil(t, err)
@@ -133,9 +151,9 @@ func TestProductRepository(t *testing.T) {
 
 	t.Run("delete product", func(t *testing.T) {
 		bareMetal := domain.Product{
-			Name:    "bare metal",
-			Weight:  1000,
-			Company: data.LazyLoadValue(kakaoEnterprise),
+			Name:     "bare metal",
+			Category: data.LazyLoadValue(computer),
+			Company:  data.LazyLoadValue(kakaoEnterprise),
 		}
 		bareMetal, err = productRepository.Create(ctx, bareMetal)
 		assert.Nil(t, err)
