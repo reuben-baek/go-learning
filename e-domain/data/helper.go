@@ -3,7 +3,6 @@ package data
 import (
 	"errors"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"reflect"
 	"strings"
@@ -32,10 +31,13 @@ func findID[T any, ID comparable](entity T) (ID, bool) {
 	}
 }
 
-func findIDValue(entity any, fieldName string) any {
-	valueOfEntity := reflect.ValueOf(entity)
+func findIDValue(ptrToEntity any, fieldName string) any {
+	valueOfEntity := reflect.ValueOf(ptrToEntity)
 	if valueOfEntity.Type().Kind() == reflect.Pointer {
 		valueOfEntity = reflect.Indirect(valueOfEntity)
+	}
+	if !valueOfEntity.IsValid() {
+		return nil
 	}
 	value := valueOfEntity.FieldByName(fieldName)
 	if !value.IsValid() {
@@ -78,12 +80,12 @@ const (
 )
 
 type Association struct {
-	Name       string
-	Value      any
-	ID         any
-	ForeignKey string
-	Type       AssociationType
-	FetchMode  FetchMode
+	Name        string
+	PtrToEntity any
+	ID          any
+	ForeignKey  string
+	Type        AssociationType
+	FetchMode   FetchMode
 }
 
 var systemStructTypes = []any{
@@ -101,8 +103,8 @@ func init() {
 	}
 }
 
-func isSystemStructType(typeName string) bool {
-	return systemStructTypeMap[typeName]
+func isSystemStructType(typeName reflect.Type) bool {
+	return systemStructTypeMap[typeName.String()]
 }
 
 func toSnakeCase(camel string) string {
@@ -125,136 +127,78 @@ func toSnakeCase(camel string) string {
 	return b.String()
 }
 
-func findAssociations[T any](entity T) []Association {
+func findAssociations(ptrToEntity any) []Association {
 	var associations []Association
-	entityValue := reflect.ValueOf(entity)
-	entityType := reflect.TypeOf(entity)
+	entityType := reflect.TypeOf(ptrToEntity)
 
-	numOfField := entityValue.NumField()
-	for i := 0; i < numOfField; i++ {
-		field := entityValue.Field(i)
-		if field.Type().Kind() == reflect.Struct {
-			fieldType := field.Type().String()
-			fieldTypeName := entityType.Field(i).Name
-			if !isSystemStructType(fieldType) {
-				logrus.Debugf("findAssociation: field Name[%s], Type[%s], Value[%+v]", fieldTypeName, fieldType, field.Interface())
-
-				fetchMode := ToFetchMode(entityType.Field(i).Tag.Get("fetch"))
-				switch fetchMode {
-				case FetchLazyMode:
-					fieldValue := reflect.New(field.Type())
-
-					belongToForeignKey := fmt.Sprintf("%sID", fieldTypeName)
-					oneToOneForeignKey := fmt.Sprintf("%sID", entityType.Name())
-					if entityValue.FieldByName(belongToForeignKey).IsValid() {
-						associations = append(associations, Association{
-							Name:      fieldTypeName,
-							Value:     fieldValue.Interface(),
-							FetchMode: FetchLazyMode,
-							ID:        findIDValue(entity, fmt.Sprintf("%sID", fieldTypeName)), // belongTo ID
-							Type:      BelongTo,
-						})
-					} else if reflect.Indirect(fieldValue).FieldByName(oneToOneForeignKey).IsValid() {
-						associations = append(associations, Association{
-							Name:       fieldTypeName,
-							Value:      fieldValue.Interface(),
-							FetchMode:  FetchLazyMode,
-							ForeignKey: toSnakeCase(oneToOneForeignKey), // belongTo ID
-							Type:       HasOne,
-						})
-					}
-				case FetchEagerMode:
-					associations = append(associations, Association{
-						Name:      fieldTypeName,
-						Value:     field.Interface(),
-						FetchMode: ToFetchMode(entityType.Field(i).Tag.Get("fetch")),
-						Type:      BelongTo,
-					})
-				}
-			}
-		} else if field.Type().Kind() == reflect.Slice {
-			if field.Type().Elem().Kind() == reflect.Struct {
-				elementType := field.Type().Elem()
-				fieldType := elementType.String()
-				fieldTypeName := entityType.Field(i).Name
-				logrus.Debugf("findAssocation: field Name=[%s], Type[%s], Value[%+v]", fieldTypeName, fieldType, field.Interface())
-
-				fetchMode := ToFetchMode(entityType.Field(i).Tag.Get("fetch"))
-				switch fetchMode {
-				case FetchLazyMode:
-					fieldValue := reflect.New(field.Type())
-					foreignKey := fmt.Sprintf("%sID", entityType.Name())
-					if _, ok := elementType.FieldByName(foreignKey); ok {
-						associations = append(associations, Association{
-							Name:       fieldTypeName,
-							Value:      fieldValue.Interface(),
-							FetchMode:  FetchLazyMode,
-							ForeignKey: toSnakeCase(foreignKey), // has-many foreign ID
-							Type:       HasMany,
-						})
-					} else {
-						associations = append(associations, Association{
-							Name:       fieldTypeName,
-							Value:      fieldValue.Interface(),
-							FetchMode:  FetchLazyMode,
-							ForeignKey: toSnakeCase(foreignKey), // many-to-many foreign ID
-							Type:       ManyToMany,
-						})
-						//panic(fmt.Sprintf("findAssociations: foreignKey %s does not exist in %s", foreignKey, fieldType))
-					}
-				case FetchEagerMode:
-					associations = append(associations, Association{
-						Name:      fieldTypeName,
-						Value:     field.Interface(),
-						FetchMode: ToFetchMode(entityType.Field(i).Tag.Get("fetch")),
-						Type:      HasMany,
-					})
-				}
-			}
-		} else if field.Type().Kind() == reflect.Pointer {
-			if field.Type().Elem().Kind() == reflect.Struct {
-				elementType := field.Type().Elem()
-				fieldType := elementType.String()
-				fieldTypeName := entityType.Field(i).Name
-				if !isSystemStructType(fieldType) {
-					logrus.Debugf("findAssociation: field Name[%s], Type[%s], Value[%+v]", fieldTypeName, fieldType, field.Interface())
-
-					fetchMode := ToFetchMode(entityType.Field(i).Tag.Get("fetch"))
-					switch fetchMode {
-					case FetchLazyMode:
-						fieldValue := reflect.New(elementType)
-
-						belongToForeignKey := fmt.Sprintf("%sID", fieldTypeName)
-						oneToOneForeignKey := fmt.Sprintf("%sID", entityType.Name())
-						if entityValue.FieldByName(belongToForeignKey).IsValid() {
-							associations = append(associations, Association{
-								Name:      fieldTypeName,
-								Value:     fieldValue.Interface(),
-								FetchMode: FetchLazyMode,
-								ID:        findIDValue(entity, fmt.Sprintf("%sID", fieldTypeName)), // belongTo ID
-								Type:      BelongTo,
-							})
-						} else if reflect.Indirect(fieldValue).FieldByName(oneToOneForeignKey).IsValid() {
-							associations = append(associations, Association{
-								Name:       fieldTypeName,
-								Value:      fieldValue.Interface(),
-								FetchMode:  FetchLazyMode,
-								ForeignKey: toSnakeCase(oneToOneForeignKey), // belongTo ID
-								Type:       HasOne,
-							})
-						}
-					case FetchEagerMode:
-						associations = append(associations, Association{
-							Name:      fieldTypeName,
-							Value:     field.Interface(),
-							FetchMode: ToFetchMode(entityType.Field(i).Tag.Get("fetch")),
-							Type:      BelongTo,
-						})
-					}
-				}
-
-			}
+	if entityType.Kind() == reflect.Pointer || entityType.Kind() == reflect.Slice {
+		entityType = entityType.Elem()
+		if entityType.Kind() == reflect.Slice {
+			entityType = entityType.Elem()
 		}
 	}
+	if entityType.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("findAssociation: entity[%s] is not struct type", entityType.String()))
+	}
+	numOfField := entityType.NumField()
+	for i := 0; i < numOfField; i++ {
+		field := entityType.Field(i)
+		if isSystemStructType(field.Type) {
+			continue
+		}
+
+		var association Association
+		association.Name = field.Name
+		association.FetchMode = ToFetchMode(field.Tag.Get("fetch"))
+
+		belongToForeignKey := fmt.Sprintf("%sID", field.Name)
+		hasForeignKey := fmt.Sprintf("%sID", entityType.Name())
+		if field.Type.Kind() == reflect.Struct {
+			association.PtrToEntity = reflect.New(field.Type).Interface()
+			if _, ok := entityType.FieldByName(belongToForeignKey); ok {
+				association.Type = BelongTo
+				association.ID = findIDValue(ptrToEntity, belongToForeignKey)
+			} else if _, ok := field.Type.FieldByName(hasForeignKey); ok {
+				association.Type = HasOne
+				association.ForeignKey = toSnakeCase(hasForeignKey)
+			}
+		} else if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct {
+			association.PtrToEntity = reflect.New(field.Type.Elem()).Interface()
+			if _, ok := entityType.FieldByName(belongToForeignKey); ok {
+				association.Type = BelongTo
+				association.ID = findIDValue(ptrToEntity, belongToForeignKey)
+			} else if _, ok := field.Type.Elem().FieldByName(hasForeignKey); ok {
+				association.Type = HasOne
+				association.ForeignKey = toSnakeCase(hasForeignKey)
+			}
+		} else if field.Type.Kind() == reflect.Slice && field.Type.Elem().Kind() == reflect.Struct {
+			association.PtrToEntity = reflect.New(field.Type).Interface()
+			if _, ok := field.Type.Elem().FieldByName(hasForeignKey); ok {
+				association.Type = HasMany
+				association.ForeignKey = toSnakeCase(hasForeignKey)
+			} else {
+				association.Type = ManyToMany
+				association.ForeignKey = toSnakeCase(hasForeignKey)
+			}
+		} else {
+			continue
+		}
+
+		associations = append(associations, association)
+	}
 	return associations
+}
+
+func ptrToEmptyElementOfPtrToSlice(ptrToSlice any) any {
+	ptrToSliceType := reflect.TypeOf(ptrToSlice)
+	if ptrToSliceType.Kind() == reflect.Pointer {
+		if ptrToSliceType.Elem().Kind() == reflect.Slice {
+			ptrToElementValue := reflect.New(ptrToSliceType.Elem().Elem())
+			return ptrToElementValue.Interface()
+		} else {
+			panic(fmt.Sprintf("%v is not pointer to slice", ptrToSliceType))
+		}
+	} else {
+		panic(fmt.Sprintf("%v is not pointer to slice", ptrToSliceType))
+	}
 }

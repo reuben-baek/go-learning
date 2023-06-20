@@ -16,7 +16,7 @@ type LazyLoadable interface {
 	SetLoadFunc(entity string, fn func() (any, error))
 	HasLoadFunc(entity string) bool
 	DeleteLoadFunc(entity string)
-	Load(name string, entity any) (any, error)
+	Load(name string, emptyEntity any) (any, error) // Load returns entity
 	Entities() []string
 }
 
@@ -49,13 +49,13 @@ func (l *LazyLoader) HasLoadFunc(entity string) bool {
 	return ok
 }
 
-func (l *LazyLoader) Load(name string, entity any) (any, error) {
-	typeOf := reflect.TypeOf(entity)
+func (l *LazyLoader) Load(name string, emptyEntity any) (any, error) {
+	typeOf := reflect.TypeOf(emptyEntity)
 	if fn, ok := l.loaderMap[name]; ok {
-		loaded, err := fn()
-		logrus.Debugf("LazyLoader.Load: LazyLoader[%p][%+v] loaded[%p][%+v]", l, l, loaded, loaded)
+		loadedEntity, err := fn()
+		logrus.Debugf("LazyLoader.Load: LazyLoader[%p] loaded [%s] [%+v], err[%v]", l, typeOf.String(), loadedEntity, err)
 		delete(l.loaderMap, name)
-		return loaded, err
+		return loadedEntity, err
 	} else {
 		return nil, fmt.Errorf("lazy load function for %s[%s] is not set", name, typeOf)
 	}
@@ -74,9 +74,12 @@ func LazyLoadNow[T any](name string, lazyLoader LazyLoadable) (T, error) {
 
 	child := reflect.Indirect(valueOfParent).FieldByName(name)
 	if child.Type().Kind() == reflect.Pointer {
-		child.Set(valueOfLoaded)
-		return loaded.(T), err
+		logrus.Debugf("LazyLoadNow: parent[%s] field[%s %s] value[%s %s]", valueOfParent.Type().String(), name, child.Type().String(), valueOfLoaded.Type().String(), valueOfLoaded.Interface())
+		child.Set(reflect.New(reflect.TypeOf(loaded)))
+		child.Elem().Set(valueOfLoaded)
+		return child.Interface().(T), err
 	} else {
+		logrus.Debugf("LazyLoadNow: parent[%s] field[%s %s] value[%s %s]", valueOfParent.Type().String(), name, child.Type().String(), valueOfLoaded.Type().String(), valueOfLoaded.Interface())
 		child.Set(reflect.Indirect(valueOfLoaded))
 		return reflect.Indirect(reflect.ValueOf(loaded)).Interface().(T), err
 	}
@@ -90,72 +93,62 @@ func NewGormRepository[T any, ID comparable](db *gorm.DB) *GormRepository[T, ID]
 	return &GormRepository[T, ID]{db: db}
 }
 
-func (u *GormRepository[T, ID]) FindBy(ctx context.Context, belongTo any) ([]T, error) {
-	var entity T
-	var entities []T
-	associations := findAssociations[T](entity)
-
-	db := u.db.Model(&entity)
-	for _, v := range associations {
-		if v.FetchMode == FetchEagerMode {
-			db = db.Preload(v.Name)
-		}
-	}
-
-	belongToTable := reflect.TypeOf(belongTo).Name()
-	var foreignKey string
-	var foreignKeyValue any
-	var zero bool
-	if foreignKeyValue, zero = findID[any, any](belongTo); zero {
-		panic(fmt.Sprintf("FindBy: %s's ID field is empty", belongToTable))
-	} else {
-		foreignKey = fmt.Sprintf("%s_id", strings.ToLower(belongToTable))
-	}
-	if err := db.Find(&entities, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue).Error; err != nil {
+// findOne returns entity
+func (u *GormRepository[T, ID]) findOne(ctx context.Context, ptrToEntity any, id any) (any, error) {
+	db := u.preload(u.db, ptrToEntity)
+	if err := db.First(ptrToEntity, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return entities, NotFoundError
+			return nil, NotFoundError
 		} else {
-			return entities, err
+			return nil, err
 		}
 	}
 
-	for i := 0; i < len(entities); i++ {
-		ent := &entities[i]
-		associations = findAssociations[T](*ent)
+	u.setLazyLoader(ctx, ptrToEntity, id)
 
-		switch anyEntity := any(ent).(type) {
-		case LazyLoadable:
-			anyEntity.NewInstance()
-			for _, v := range associations {
-				if v.FetchMode == FetchLazyMode {
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfBelongTo(ctx, v.Value, v.ID))
-				}
-			}
-		}
-	}
-	return entities, nil
+	return reflect.Indirect(reflect.ValueOf(ptrToEntity)).Interface(), nil
 }
 
-func (u *GormRepository[T, ID]) findOne(ctx context.Context, entity any, id any) (any, error) {
-	associations := findAssociations(entity)
-
-	db := u.db.Model(&entity)
-	for _, v := range associations {
-		if v.FetchMode == FetchEagerMode {
-			db = db.Preload(v.Name)
-		}
-	}
-	if err := db.First(&entity, "id = ?", id).Error; err != nil {
+// findOneByForeignKey returns ptrEoEntity
+func (u *GormRepository[T, ID]) findOneByForeignKey(ctx context.Context, ptrToEntity any, foreignKey string, id any) (any, error) {
+	db := u.preload(u.db, ptrToEntity)
+	if err := db.Model(ptrToEntity).First(ptrToEntity, fmt.Sprintf("%s = ?", foreignKey), id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return entity, NotFoundError
+			return nil, NotFoundError
 		} else {
-			return entity, err
+			return nil, err
 		}
 	}
 
-	associations = findAssociations(entity)
+	u.setLazyLoader(ctx, ptrToEntity, id)
+	return reflect.Indirect(reflect.ValueOf(ptrToEntity)).Interface(), nil
+}
 
-	switch anyEntity := any(&entity).(type) {
+func (u *GormRepository[T, ID]) findByForeignKey(ctx context.Context, ptrToSlice any, foreignKey string, id any) (any, error) {
+	ptrToElement := ptrToEmptyElementOfPtrToSlice(ptrToSlice)
+	db := u.preload(u.db, ptrToElement)
+
+	if err := db.Model(ptrToSlice).Find(ptrToSlice, fmt.Sprintf("%s = ?", foreignKey), id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NotFoundError
+		} else {
+			return nil, err
+		}
+	}
+
+	// for each element, set lazy loader
+	elementValues := reflect.ValueOf(ptrToSlice).Elem()
+	for i := 0; i < elementValues.Len(); i++ {
+		u.setLazyLoader(ctx, elementValues.Index(i).Addr().Interface(), id)
+	}
+
+	return reflect.Indirect(reflect.ValueOf(ptrToSlice)).Interface(), nil
+}
+
+func (u *GormRepository[T, ID]) setLazyLoader(ctx context.Context, ptrToEntity any, id any) any {
+	associations := findAssociations(ptrToEntity)
+
+	switch anyEntity := ptrToEntity.(type) {
 	case LazyLoadable:
 		anyEntity.NewInstance()
 		for _, v := range associations {
@@ -163,73 +156,61 @@ func (u *GormRepository[T, ID]) findOne(ctx context.Context, entity any, id any)
 			case FetchLazyMode:
 				switch v.Type {
 				case BelongTo:
-					logrus.Debugf("GormRepository.FindOne: SetLoadFunc belong-to entity [%p], association [%p], association_id [%v]", anyEntity, v.Value, v.ID)
+					logrus.Debugf("GormRepository.FindOne: SetLoadFunc belong-to entity [%p], association [%p], association_id [%v]", anyEntity, v.PtrToEntity, v.ID)
 					if v.ID != nil {
-						anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfBelongTo(ctx, v.Value, v.ID))
+						anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfBelongTo(ctx, v.PtrToEntity, v.ID))
 					}
 				case HasOne:
-					logrus.Debugf("GormRepository.FindOne: SetLoadFunc has-one entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasOne(ctx, v.Value, v.ForeignKey, id))
+					logrus.Debugf("GormRepository.FindOne: SetLoadFunc has-one entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.PtrToEntity, v.ForeignKey, id)
+					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasOne(ctx, v.PtrToEntity, v.ForeignKey, id))
 				case HasMany:
-					logrus.Debugf("GormRepository.FindOne: SetLoadFunc has-many entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasMany(ctx, v.Value, v.ForeignKey, id))
+					logrus.Debugf("GormRepository.FindOne: SetLoadFunc has-many entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.PtrToEntity, v.ForeignKey, id)
+					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasMany(ctx, v.PtrToEntity, v.ForeignKey, id))
 				case ManyToMany:
-					logrus.Debugf("GormRepository.FindOne: SetLoadFunc many-to-many entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfManyMany(ctx, entity, v.Value, v.Name, v.ForeignKey, id))
+					logrus.Debugf("GormRepository.FindOne: SetLoadFunc many-to-many entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.PtrToEntity, v.ForeignKey, id)
+					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfManyMany(ctx, ptrToEntity, v.PtrToEntity, v.Name, v.ForeignKey, id))
 				}
 			}
 		}
 	}
-	return entity, nil
+	return ptrToEntity
+}
+
+func (u *GormRepository[T, ID]) preload(db *gorm.DB, ptrToEntity any) *gorm.DB {
+	associations := findAssociations(ptrToEntity)
+
+	tx := db.Model(ptrToEntity)
+	for _, v := range associations {
+		if v.FetchMode == FetchEagerMode {
+			tx = tx.Preload(v.Name)
+		}
+	}
+	return tx
 }
 
 func (u *GormRepository[T, ID]) FindOne(ctx context.Context, id ID) (T, error) {
 	var entity T
-
-	associations := findAssociations[T](entity)
-
-	db := u.db.Model(&entity)
-	for _, v := range associations {
-		if v.FetchMode == FetchEagerMode {
-			db = db.Preload(v.Name)
-		}
+	if found, err := u.findOne(ctx, &entity, id); err != nil {
+		return entity, err
+	} else {
+		return found.(T), nil
 	}
-	if err := db.First(&entity, "id = ?", id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return entity, NotFoundError
+}
+
+func (u *GormRepository[T, ID]) FindBy(ctx context.Context, belongTo any) ([]T, error) {
+	var entities []T
+
+	belongToTable := reflect.TypeOf(belongTo).Name()
+	if foreignKeyValue, zero := findID[any, any](belongTo); zero {
+		panic(fmt.Sprintf("FindBy: %s's ID field is empty", belongToTable))
+	} else {
+		foreignKey := fmt.Sprintf("%s_id", strings.ToLower(belongToTable))
+		if found, err := u.findByForeignKey(ctx, &entities, foreignKey, foreignKeyValue); err != nil {
+			return entities, err
 		} else {
-			return entity, err
+			return found.([]T), nil
 		}
 	}
-
-	associations = findAssociations[T](entity)
-
-	switch anyEntity := any(&entity).(type) {
-	case LazyLoadable:
-		anyEntity.NewInstance()
-		for _, v := range associations {
-			switch v.FetchMode {
-			case FetchLazyMode:
-				switch v.Type {
-				case BelongTo:
-					logrus.Debugf("GormRepository.FindOne: SetLoadFunc belong-to entity [%p], association [%p], association_id [%v]", anyEntity, v.Value, v.ID)
-					if v.ID != nil {
-						anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfBelongTo(ctx, v.Value, v.ID))
-					}
-				case HasOne:
-					logrus.Debugf("GormRepository.FindOne: SetLoadFunc has-one entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasOne(ctx, v.Value, v.ForeignKey, id))
-				case HasMany:
-					logrus.Debugf("GormRepository.FindOne: SetLoadFunc has-many entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasMany(ctx, v.Value, v.ForeignKey, id))
-				case ManyToMany:
-					logrus.Debugf("GormRepository.FindOne: SetLoadFunc many-to-many entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfManyMany(ctx, entity, v.Value, v.Name, v.ForeignKey, id))
-				}
-			}
-		}
-	}
-	return entity, nil
 }
 
 func (u *GormRepository[T, ID]) Create(ctx context.Context, entity T) (T, error) {
@@ -249,10 +230,11 @@ func (u *GormRepository[T, ID]) Update(ctx context.Context, entity T) (T, error)
 	if id, zero = findID[T, ID](entity); zero {
 		panic("entity.ID is missing")
 	}
+
 	update := entity
 	switch lazyLoader := any(&entity).(type) {
 	case LazyLoadable:
-		associations := findAssociations[T](entity)
+		associations := findAssociations(&entity)
 		for _, association := range associations {
 			switch association.FetchMode {
 			case FetchLazyMode:
@@ -290,50 +272,18 @@ func (u *GormRepository[T, ID]) Update(ctx context.Context, entity T) (T, error)
 		return entity, err
 	}
 
-	associations := findAssociations[T](update)
-
-	switch anyEntity := any(&update).(type) {
-	case LazyLoadable:
-		anyEntity.NewInstance()
-		for _, v := range associations {
-			fieldValue := reflect.Indirect(reflect.ValueOf(anyEntity)).FieldByName(v.Name)
-			switch v.FetchMode {
-			case FetchLazyMode:
-				switch v.Type {
-				case BelongTo:
-					logrus.Debugf("GormRepository.Update: SetLoadFunc belong-to entity [%p], association [%p], association_id [%v]", anyEntity, v.Value, v.ID)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfBelongTo(ctx, v.Value, v.ID))
-					// clear association field value
-					if fieldValue.Type().Kind() == reflect.Pointer {
-						fieldValue.Set(reflect.ValueOf(v.Value))
-					} else {
-						fieldValue.Set(reflect.Indirect(reflect.ValueOf(v.Value)))
-					}
-				case HasOne:
-					logrus.Debugf("GormRepository.Update: SetLoadFunc has-one entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasOne(ctx, v.Value, v.ForeignKey, id))
-					// clear association field value
-					fieldValue.Set(reflect.Indirect(reflect.ValueOf(v.Value)))
-				case HasMany:
-					logrus.Debugf("GormRepository.Update: SetLoadFunc has-many entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasMany(ctx, v.Value, v.ForeignKey, id))
-					fieldValue.SetLen(0)
-				case ManyToMany:
-					logrus.Debugf("GormRepository.Update: SetLoadFunc many-to-many entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.Value, v.ForeignKey, id)
-					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfManyMany(ctx, entity, v.Value, v.Name, v.ForeignKey, id))
-					fieldValue.SetLen(0)
-				}
-			}
-		}
+	var updated T
+	if found, err := u.findOne(ctx, &updated, id); err != nil {
+		return updated, err
+	} else {
+		return found.(T), err
 	}
-
-	return update, nil
 }
 
 func (u *GormRepository[T, ID]) clearAssociations(entity T) T {
 	var updated T
 
-	associations := findAssociations[T](entity)
+	associations := findAssociations(&entity)
 	updated = entity
 
 	for _, ass := range associations {
@@ -372,8 +322,9 @@ func (u *GormRepository[T, ID]) Delete(ctx context.Context, entity T) error {
 	return nil
 }
 
-func (u *GormRepository[T, ID]) GetLazyLoadFuncOfBelongTo(ctx context.Context, entity any, id any) func() (any, error) {
-	logrus.Debugf("GormRepository.GetLazyLoadFuncOfBelongTo: entity [%p] [%+v] id[%v]", entity, entity, id)
+// GetLazyLoadFuncOfBelongTo returns entity returning function
+func (u *GormRepository[T, ID]) GetLazyLoadFuncOfBelongTo(ctx context.Context, ptrToEntity any, id any) func() (any, error) {
+	logrus.Debugf("GormRepository.GetLazyLoadFuncOfBelongTo: entity [%p] [%+v] id[%v]", ptrToEntity, ptrToEntity, id)
 	return func() (any, error) {
 		idValue := reflect.ValueOf(id)
 		if idValue.Type().Kind() == reflect.Pointer && idValue.IsNil() {
@@ -382,51 +333,68 @@ func (u *GormRepository[T, ID]) GetLazyLoadFuncOfBelongTo(ctx context.Context, e
 		if idValue.IsZero() {
 			return nil, gorm.ErrRecordNotFound
 		}
-		if err := u.db.Model(entity).First(entity, "id = ?", id).Error; err != nil {
+		if found, err := u.findOne(ctx, ptrToEntity, id); err != nil {
 			return nil, err
+		} else {
+			return found, nil
 		}
-
-		return reflect.ValueOf(entity).Interface(), nil
 	}
 }
 
-func (u *GormRepository[T, ID]) GetLazyLoadFuncOfHasOne(ctx context.Context, entity any, foreignKey string, foreignKeyValue any) func() (any, error) {
-	logrus.Debugf("GormRepository.GetLazyLoadFuncOfHasOne: entity [%p] [%+v] foreignKey[%s:%v]", entity, entity, foreignKey, foreignKeyValue)
+// GetLazyLoadFuncOfHasOne returns entity returning function
+func (u *GormRepository[T, ID]) GetLazyLoadFuncOfHasOne(ctx context.Context, ptrToEntity any, foreignKey string, foreignKeyValue any) func() (any, error) {
+	logrus.Debugf("GormRepository.GetLazyLoadFuncOfHasOne: entity [%p] [%+v] foreignKey[%s:%v]", ptrToEntity, ptrToEntity, foreignKey, foreignKeyValue)
 	return func() (any, error) {
-		if err := u.db.Model(entity).First(entity, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue).Error; err != nil {
+		var err error
+		if ptrToEntity, err = u.findOneByForeignKey(ctx, ptrToEntity, foreignKey, foreignKeyValue); err != nil {
 			return nil, err
 		}
-		return reflect.ValueOf(entity).Interface(), nil
+		return ptrToEntity, nil
 	}
 }
 
-func (u *GormRepository[T, ID]) GetLazyLoadFuncOfHasMany(ctx context.Context, entity any, foreignKey string, foreignKeyValue any) func() (any, error) {
-	logrus.Debugf("GormRepository.GetLazyLoadFuncOfHasMany: entity [%p] [%+v] foreignKey[%s:%v]", entity, entity, foreignKey, foreignKeyValue)
+// GetLazyLoadFuncOfHasMany returns slice of entity returning function
+func (u *GormRepository[T, ID]) GetLazyLoadFuncOfHasMany(ctx context.Context, ptrToEntity any, foreignKey string, foreignKeyValue any) func() (any, error) {
+	logrus.Debugf("GormRepository.GetLazyLoadFuncOfHasMany: entity [%p] [%+v] foreignKey[%s:%v]", ptrToEntity, ptrToEntity, foreignKey, foreignKeyValue)
 	return func() (any, error) {
-		if err := u.db.Model(entity).Find(entity, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue).Error; err != nil {
+		var err error
+		if ptrToEntity, err = u.findByForeignKey(ctx, ptrToEntity, foreignKey, foreignKeyValue); err != nil {
 			return nil, err
 		}
-
-		// todo recursive set LazyLoadFunc to entity elements
-		//entityValue := reflect.ValueOf(entity)
-		//for i := 0; i< entityValue.Len(); i++ {
-		//	elementValue:= entityValue.Index(i)
-		//	elementIDValue := elementValue.FieldByName("ID")
-		//	id := elementIDValue.Interface()
-		//	u.findOne(ctx, elementValue.Interface(), id)
-		//}
-		return reflect.ValueOf(entity).Interface(), nil
+		return ptrToEntity, nil
 	}
 }
 
-func (u *GormRepository[T, ID]) GetLazyLoadFuncOfManyMany(ctx context.Context, parent any, entity any, associationName string, foreignKey string, foreignKeyValue any) func() (any, error) {
-	logrus.Debugf("GormRepository.GetLazyLoadFuncOfManyMany: entity [%p] [%+v] foreignKey[%s:%v]", entity, entity, foreignKey, foreignKeyValue)
+// GetLazyLoadFuncOfManyMany returns slice of entity returning function
+func (u *GormRepository[T, ID]) GetLazyLoadFuncOfManyMany(ctx context.Context, ptrToParent any, ptrToChild any, associationName string, foreignKey string, foreignKeyValue any) func() (any, error) {
+	logrus.Debugf("GormRepository.GetLazyLoadFuncOfManyMany: entity [%p] [%+v] foreignKey[%s:%v]", ptrToChild, ptrToChild, foreignKey, foreignKeyValue)
 	return func() (any, error) {
-		if err := u.db.Model(parent).Association(associationName).Find(entity, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue); err != nil {
+		var err error
+		if ptrToChild, err = u.findAssociationsByForeignKey(ctx, ptrToParent, ptrToChild, associationName, foreignKey, foreignKeyValue); err != nil {
 			return nil, err
 		}
-		return reflect.ValueOf(entity).Interface(), nil
+		return ptrToChild, nil
 	}
+}
+
+func (u *GormRepository[T, ID]) findAssociationsByForeignKey(ctx context.Context, ptrToParent any, ptrToChild any, associationName string, foreignKey string, foreignKeyValue any) (any, error) {
+	db := u.db.Model(ptrToParent).Association(associationName)
+
+	if err := db.Find(ptrToChild, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NotFoundError
+		} else {
+			return nil, err
+		}
+	}
+
+	// for each element, set lazy loader
+	elementValues := reflect.ValueOf(ptrToChild).Elem()
+	for i := 0; i < elementValues.Len(); i++ {
+		u.setLazyLoader(ctx, elementValues.Index(i).Addr().Interface(), foreignKeyValue)
+	}
+
+	return reflect.Indirect(reflect.ValueOf(ptrToChild)).Interface(), nil
 }
 
 type GormBelongToRepository[T any, S any, ID comparable] struct {

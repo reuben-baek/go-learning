@@ -3,6 +3,7 @@ package data_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"github.com/reuben-baek/go-learning/e-domain/data"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -108,7 +109,7 @@ func TestGormRepository_GetLazyLoadFn(t *testing.T) {
 
 	loadedCompany, err := loadFn()
 	assert.Nil(t, err)
-	assert.Equal(t, 1, loadedCompany.(*Company).ID)
+	assert.Equal(t, 1, loadedCompany.(Company).ID)
 }
 
 func TestGormRepository_SelfRef_Lazy(t *testing.T) {
@@ -156,6 +157,7 @@ func TestGormRepository_SelfRef_Lazy(t *testing.T) {
 		assert.Equal(t, computer.ID, parent.ID)
 		assert.Equal(t, computer.Name, parent.Name)
 		assert.Empty(t, parent.Parent)
+		assert.Equal(t, found.Parent, parent)
 	})
 	t.Run("update", func(t *testing.T) {
 		ctx := context.Background()
@@ -189,8 +191,7 @@ func TestGormRepository_SelfRef_Lazy(t *testing.T) {
 			parent, err := data.LazyLoadNow[*Category]("Parent", &updated)
 			assert.Nil(t, err)
 			assert.Equal(t, computer.ID, updated.Parent.ID)
-			assert.Equal(t, computer.ID, updated.Parent.Name)
-			assert.Equal(t, computer.ID, updated.Parent.Name)
+			assert.Equal(t, computer.Name, updated.Parent.Name)
 			assert.Equal(t, updated.Parent, parent)
 
 			// rollback for next tests
@@ -655,7 +656,8 @@ func TestGormRepository_HasOne_Lazy(t *testing.T) {
 			assert.Equal(t, reuben.CreditCard, creditCard)
 
 			// rollback for next tests
-			userRepository.Update(ctx, reuben)
+			rollback, _ := userRepository.Update(ctx, reuben)
+			fmt.Printf("%+v\n", rollback)
 		})
 		t.Run("name field after lazy load", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)

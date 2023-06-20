@@ -4,6 +4,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/gorm"
+	"reflect"
 	"testing"
 )
 
@@ -77,8 +78,9 @@ func TestFindAssociations(t *testing.T) {
 	t.Run("eager", func(t *testing.T) {
 		t.Run("1:1 cardinality", func(t *testing.T) {
 			type Order struct {
-				ID   int
-				Name string
+				ID     int
+				Name   string
+				UserID uint
 			}
 			type User struct {
 				gorm.Model
@@ -92,28 +94,30 @@ func TestFindAssociations(t *testing.T) {
 				},
 				Name: "reuben",
 				Order: Order{
-					ID:   1,
-					Name: "order-1",
+					ID:     1,
+					Name:   "order-1",
+					UserID: 1,
 				},
 			}
 
 			expected := []Association{
 				{
-					Name:       "Order",
-					Value:      user.Order,
-					ID:         nil,
-					ForeignKey: "",
-					Type:       BelongTo,
-					FetchMode:  FetchEagerMode,
+					Name:        "Order",
+					PtrToEntity: &Order{},
+					ID:          nil,
+					ForeignKey:  "user_id",
+					Type:        HasOne,
+					FetchMode:   FetchEagerMode,
 				},
 			}
-			associations := findAssociations[User](user)
+			associations := findAssociations(user)
 			assert.Equal(t, expected, associations)
 		})
 		t.Run("1:n cardinality", func(t *testing.T) {
 			type Order struct {
-				ID   int
-				Name string
+				ID     int
+				Name   string
+				UserID uint
 			}
 			type User struct {
 				gorm.Model
@@ -128,23 +132,25 @@ func TestFindAssociations(t *testing.T) {
 				Name: "reuben",
 				Orders: []Order{
 					{
-						ID:   1,
-						Name: "order-1",
+						ID:     1,
+						Name:   "order-1",
+						UserID: 1,
 					},
 				},
 			}
 
+			orders := []Order(nil)
 			expected := []Association{
 				{
-					Name:       "Orders",
-					Value:      user.Orders,
-					ID:         nil,
-					ForeignKey: "",
-					Type:       HasMany,
-					FetchMode:  FetchEagerMode,
+					Name:        "Orders",
+					PtrToEntity: &orders,
+					ID:          nil,
+					ForeignKey:  "user_id",
+					Type:        HasMany,
+					FetchMode:   FetchEagerMode,
 				},
 			}
-			associations := findAssociations[User](user)
+			associations := findAssociations(user)
 			assert.Equal(t, expected, associations)
 		})
 	})
@@ -166,15 +172,15 @@ func TestFindAssociations(t *testing.T) {
 				}
 				expected := []Association{
 					{
-						Name:       "Parent",
-						Value:      &Category{},
-						ID:         nil,
-						ForeignKey: "",
-						Type:       BelongTo,
-						FetchMode:  FetchLazyMode,
+						Name:        "Parent",
+						PtrToEntity: &Category{},
+						ID:          nil,
+						ForeignKey:  "",
+						Type:        BelongTo,
+						FetchMode:   FetchLazyMode,
 					},
 				}
-				associations := findAssociations[Category](computer)
+				associations := findAssociations(computer)
 
 				assert.Equal(t, expected, associations)
 			})
@@ -194,15 +200,15 @@ func TestFindAssociations(t *testing.T) {
 				}
 				expected := []Association{
 					{
-						Name:       "Parent",
-						Value:      &Category{},
-						ID:         &deviceID,
-						ForeignKey: "",
-						Type:       BelongTo,
-						FetchMode:  FetchLazyMode,
+						Name:        "Parent",
+						PtrToEntity: &Category{},
+						ID:          &deviceID,
+						ForeignKey:  "",
+						Type:        BelongTo,
+						FetchMode:   FetchLazyMode,
 					},
 				}
-				associations := findAssociations[Category](computer)
+				associations := findAssociations(computer)
 
 				assert.Equal(t, expected, associations)
 			})
@@ -228,15 +234,15 @@ func TestFindAssociations(t *testing.T) {
 			}
 			expected := []Association{
 				{
-					Name:       "Company",
-					Value:      &Company{},
-					ID:         1,
-					ForeignKey: "",
-					Type:       BelongTo,
-					FetchMode:  FetchLazyMode,
+					Name:        "Company",
+					PtrToEntity: &Company{},
+					ID:          1,
+					ForeignKey:  "",
+					Type:        BelongTo,
+					FetchMode:   FetchLazyMode,
 				},
 			}
-			associations := findAssociations[User](reuben)
+			associations := findAssociations(reuben)
 
 			assert.Equal(t, expected, associations)
 		})
@@ -260,14 +266,14 @@ func TestFindAssociations(t *testing.T) {
 			}
 			expected := []Association{
 				{
-					Name:       "CreditCard",
-					Value:      &CreditCard{},
-					ForeignKey: "user_id",
-					Type:       HasOne,
-					FetchMode:  FetchLazyMode,
+					Name:        "CreditCard",
+					PtrToEntity: &CreditCard{},
+					ForeignKey:  "user_id",
+					Type:        HasOne,
+					FetchMode:   FetchLazyMode,
 				},
 			}
-			associations := findAssociations[User](reuben)
+			associations := findAssociations(reuben)
 
 			assert.Equal(t, expected, associations)
 		})
@@ -291,14 +297,14 @@ func TestFindAssociations(t *testing.T) {
 			}
 			expected := []Association{
 				{
-					Name:       "CreditCards",
-					Value:      []CreditCard(nil),
-					ForeignKey: "user_id",
-					Type:       HasMany,
-					FetchMode:  FetchLazyMode,
+					Name:        "CreditCards",
+					PtrToEntity: &reuben.CreditCards,
+					ForeignKey:  "user_id",
+					Type:        HasMany,
+					FetchMode:   FetchLazyMode,
 				},
 			}
-			associations := findAssociations[User](reuben)
+			associations := findAssociations(reuben)
 
 			assert.Equal(t, expected, associations)
 		})
@@ -310,7 +316,8 @@ func TestFindLazyEntity(t *testing.T) {
 		ID int
 	}
 	type Order struct {
-		ID int
+		ID     int
+		UserID int
 	}
 	type Role struct {
 		ID   int
@@ -323,6 +330,7 @@ func TestFindLazyEntity(t *testing.T) {
 		Name      string
 		CompanyID string
 		Company   Company `fetch:"lazy"`
+		RoleID    int
 		Role      Role    `fetch:"eager"`
 		Orders    []Order `fetch:"eager"`
 	}
@@ -334,29 +342,92 @@ func TestFindLazyEntity(t *testing.T) {
 		Name:      "reuben",
 		CompanyID: "1",
 	}
+	orders := []Order(nil)
 	expected := []Association{
 		{
-			Name:       "Company",
-			Value:      &Company{},
-			ID:         "1",
-			ForeignKey: "",
-			Type:       BelongTo,
-			FetchMode:  FetchLazyMode,
+			Name:        "Company",
+			PtrToEntity: &Company{},
+			ID:          "1",
+			ForeignKey:  "",
+			Type:        BelongTo,
+			FetchMode:   FetchLazyMode,
 		},
 		{
-			Name:      "Role",
-			Value:     Role{},
-			FetchMode: FetchEagerMode,
-			Type:      BelongTo,
+			Name:        "Role",
+			PtrToEntity: &Role{},
+			ID:          nil,
+			ForeignKey:  "",
+			FetchMode:   FetchEagerMode,
+			Type:        BelongTo,
 		},
 		{
-			Name:      "Orders",
-			Value:     []Order(nil),
-			FetchMode: FetchEagerMode,
-			Type:      HasMany,
+			Name:        "Orders",
+			PtrToEntity: &orders,
+			ForeignKey:  "user_id",
+			FetchMode:   FetchEagerMode,
+			Type:        HasMany,
 		},
 	}
-	associations := findAssociations[User](reuben)
+	associations := findAssociations(reuben)
 
 	assert.Equal(t, expected, associations)
+}
+
+func appendByReflection(slice any, item any) any {
+	sliceValue := reflect.ValueOf(slice)
+	itemValue := reflect.ValueOf(item)
+	if sliceValue.IsNil() {
+		sliceValue = reflect.MakeSlice(reflect.SliceOf(itemValue.Type()), 0, 1)
+	}
+	sliceValue = reflect.Append(sliceValue, itemValue)
+	return sliceValue.Interface()
+}
+
+func TestReflectionHelper(t *testing.T) {
+	t.Run("slice", func(t *testing.T) {
+		type Company struct {
+			ID int
+		}
+		var expected, actual []Company
+
+		expected = append(expected, Company{ID: 1})
+
+		actual = appendByReflection(actual, Company{ID: 1}).([]Company)
+		assert.Equal(t, expected, actual)
+	})
+
+	t.Run("pointer", func(t *testing.T) {
+		type Company struct {
+			ID     int
+			Parent *Company
+		}
+
+		var actual Company
+
+		kakao := Company{
+			ID: 1,
+		}
+		kep := Company{
+			ID:     2,
+			Parent: &kakao,
+		}
+
+		actual.ID = 2
+		actualValue := reflect.Indirect(reflect.ValueOf(&actual)).FieldByName("Parent")
+		parentValue := reflect.ValueOf(kakao)
+		actualValue.Set(reflect.New(reflect.TypeOf(Company{})))
+		actualValue.Elem().Set(parentValue)
+
+		assert.Equal(t, kep, actual)
+	})
+
+	t.Run("ptrToEmptyElementOfPtrToSlice", func(t *testing.T) {
+		type Company struct {
+			ID int
+		}
+		var companies []Company
+
+		ptrToElement := ptrToEmptyElementOfPtrToSlice(&companies)
+		assert.Equal(t, &Company{}, ptrToElement)
+	})
 }

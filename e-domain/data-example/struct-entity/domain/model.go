@@ -13,7 +13,7 @@ type Company struct {
 type Category struct {
 	ID     uint
 	Name   string
-	Parent data.Lazy[Category] // belong-to self - self reference
+	Parent data.Lazy[Category] // belong-to self reference
 }
 
 type Product struct {
@@ -23,13 +23,22 @@ type Product struct {
 	Company  data.Lazy[Company]  // belong-to
 }
 
+type Department struct {
+	ID      uint
+	Name    string
+	Company data.Lazy[Company]    // belong-to
+	Upper   data.Lazy[Department] // belong-to self
+	Manager data.Lazy[Employee]   // belong-to
+}
+
 type Employee struct {
-	ID         uint
-	Name       string
-	Company    data.Lazy[Company]    // belong-to
-	Manages    data.Lazy[[]Product]  // has-many
-	CreditCard CreditCard            // has-one - eager
-	Languages  data.Lazy[[]Language] // many-to-many
+	ID          uint
+	Name        string
+	Company     data.Lazy[Company]      // belong-to
+	Manages     data.Lazy[[]Product]    // has-many
+	CreditCard  CreditCard              // has-one - eager
+	Departments data.Lazy[[]Department] // many-to-many
+	Languages   data.Lazy[[]Language]   // many-to-many
 }
 
 type CreditCard struct {
@@ -60,8 +69,14 @@ type ProductRepository interface {
 type EmployeeRepository interface {
 	data.Repository[Employee, uint]
 	FindByCompany(ctx context.Context, company Company) ([]Employee, error)
+	FindByDepartment(ctx context.Context, department Department) ([]Employee, error)
 }
 
 type LanguageRepository interface {
 	data.Repository[Language, string]
+}
+
+type DepartmentRepository interface {
+	data.Repository[Department, uint]
+	//FindByUpperDepartment(ctx context.Context, upper Department) ([]Department, error)
 }
