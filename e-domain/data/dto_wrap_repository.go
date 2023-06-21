@@ -45,18 +45,18 @@ func NewDtoWrapRepository[D DTO[M], M any, ID comparable](dtoRepository Reposito
 	}
 }
 
-type DtoWrapBelongToRepository[D DTO[M], M any, E DTO[S], S any] struct {
-	dtoRepository BelongToRepository[D, E]
+type DtoWrapFindByRepository[D DTO[M], M any, E DTO[S], S any] struct {
+	dtoRepository FindByRepository[D, E]
 }
 
-func NewDtoWrapBelongToRepository[D DTO[M], M any, E DTO[S], S any](dtoRepository BelongToRepository[D, E]) *DtoWrapBelongToRepository[D, M, E, S] {
-	return &DtoWrapBelongToRepository[D, M, E, S]{dtoRepository: dtoRepository}
+func NewDtoWrapFindByRepository[D DTO[M], M any, E DTO[S], S any](dtoRepository FindByRepository[D, E]) *DtoWrapFindByRepository[D, M, E, S] {
+	return &DtoWrapFindByRepository[D, M, E, S]{dtoRepository: dtoRepository}
 }
 
-func (d *DtoWrapBelongToRepository[D, M, E, S]) FindBy(ctx context.Context, belongTo S) ([]M, error) {
+func (d *DtoWrapFindByRepository[D, M, E, S]) FindBy(ctx context.Context, name string, byEntity S) ([]M, error) {
 	var dto E
-	dto = dto.From(belongTo).(E)
-	dtos, err := d.dtoRepository.FindBy(ctx, dto)
+	dto = dto.From(byEntity).(E)
+	dtos, err := d.dtoRepository.FindBy(ctx, name, dto)
 
 	models := make([]M, 0, len(dtos))
 	for _, v := range dtos {

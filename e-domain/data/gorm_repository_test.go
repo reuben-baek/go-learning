@@ -159,6 +159,34 @@ func TestGormRepository_SelfRef_Lazy(t *testing.T) {
 		assert.Empty(t, parent.Parent)
 		assert.Equal(t, found.Parent, parent)
 	})
+	t.Run("find by", func(t *testing.T) {
+		ctx := context.Background()
+		computer := Category{
+			Name: "computer",
+		}
+		computer, _ = categoryRepository.Create(ctx, computer)
+
+		parentID := computer.ID
+		mac := Category{
+			Name:     "mac",
+			ParentID: &parentID,
+		}
+		mac, _ = categoryRepository.Create(ctx, mac)
+
+		found, err := categoryRepository.FindBy(ctx, "Parent", computer)
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(found))
+		assert.Equal(t, mac.ID, found[0].ID)
+		assert.Equal(t, *mac.ParentID, *found[0].ParentID)
+		assert.Empty(t, found[0].Parent)
+
+		parent, err := data.LazyLoadNow[*Category]("Parent", &found[0])
+		assert.Nil(t, err)
+		assert.Equal(t, computer.ID, parent.ID)
+		assert.Equal(t, computer.Name, parent.Name)
+		assert.Empty(t, parent.Parent)
+		assert.Equal(t, found[0].Parent, parent)
+	})
 	t.Run("update", func(t *testing.T) {
 		ctx := context.Background()
 		computer := Category{
@@ -314,6 +342,31 @@ func TestGormRepository_BelongTo_Lazy(t *testing.T) {
 		company, err := data.LazyLoadNow[Company]("Company", &found)
 		assert.Nil(t, err)
 		assert.Equal(t, kakaoEnterpriseCreated, company)
+	})
+	t.Run("find by", func(t *testing.T) {
+		ctx := context.Background()
+		kakaoEnterprise := Company{
+			Name: "kakao enterprise",
+		}
+		kakaoEnterprise, _ = companyRepository.Create(ctx, kakaoEnterprise)
+
+		reuben := User{
+			Name:    "reuben.b",
+			Company: kakaoEnterprise,
+		}
+		created, _ := userRepository.Create(ctx, reuben)
+
+		found, err := userRepository.FindBy(ctx, "Company", kakaoEnterprise)
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(found))
+		assert.Equal(t, created.ID, found[0].ID)
+		assert.Equal(t, created.Name, found[0].Name)
+		assert.Equal(t, created.CompanyID, found[0].CompanyID)
+		assert.Empty(t, found[0].Company)
+
+		company, err := data.LazyLoadNow[Company]("Company", &found[0])
+		assert.Nil(t, err)
+		assert.Equal(t, kakaoEnterprise, company)
 	})
 
 	t.Run("update", func(t *testing.T) {
@@ -502,7 +555,7 @@ func TestGormRepository_BelongTo_Eager(t *testing.T) {
 		created, err := userRepository.Create(ctx, reuben)
 		assert.Nil(t, err)
 
-		users, err := userRepository.FindBy(ctx, kakaoEnterpriseCreated)
+		users, err := userRepository.FindBy(ctx, "Company", kakaoEnterpriseCreated)
 		assert.Nil(t, err)
 		assert.Equal(t, 1, len(users))
 		assert.Equal(t, created, users[0])
@@ -629,7 +682,25 @@ func TestGormRepository_HasOne_Lazy(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, created.CreditCard, creditCard)
 	})
+	t.Run("find by", func(t *testing.T) {
+		ctx := context.Background()
 
+		reuben := User{
+			Name: "reuben.b",
+			CreditCard: CreditCard{
+				Number: "123412341234",
+			},
+		}
+		created, _ := userRepository.Create(ctx, reuben)
+
+		found, err := userRepository.FindBy(ctx, "CreditCard", created.CreditCard)
+		assert.Nil(t, err)
+		assert.Equal(t, created.ID, found[0].ID)
+		assert.Empty(t, found[0].CreditCard)
+		creditCard, err := data.LazyLoadNow[CreditCard]("CreditCard", &found[0])
+		assert.Nil(t, err)
+		assert.Equal(t, created.CreditCard, creditCard)
+	})
 	t.Run("update field", func(t *testing.T) {
 		ctx := context.Background()
 
@@ -915,7 +986,37 @@ func TestGormRepository_HasMany_Lazy(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, created.CreditCards, foundCreditCards)
 	})
+	t.Run("find by", func(t *testing.T) {
+		ctx := context.Background()
 
+		creditCards := []CreditCard{
+			{
+				Number: "123412341234",
+			},
+			{
+				Number: "000000000000",
+			},
+		}
+		reuben := User{
+			Name:        "reuben.b",
+			CreditCards: creditCards,
+		}
+		created, err := userRepository.Create(ctx, reuben)
+		assert.Nil(t, err)
+		assert.NotEmpty(t, created.ID)
+		assert.NotEmpty(t, created.CreditCards[0].ID)
+		assert.NotEmpty(t, created.CreditCards[1].ID)
+
+		found, err := userRepository.FindBy(ctx, "CreditCard", created.CreditCards[1])
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(found))
+		assert.NotEmpty(t, found[0].ID)
+		assert.Empty(t, found[0].CreditCards)
+
+		foundCreditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &found[0])
+		assert.Nil(t, err)
+		assert.Equal(t, created.CreditCards, foundCreditCards)
+	})
 	t.Run("update field", func(t *testing.T) {
 		ctx := context.Background()
 
@@ -1258,6 +1359,19 @@ func TestGormRepository_ManyToMany_Lazy(t *testing.T) {
 		languages, err := data.LazyLoadNow[[]Language]("Languages", &found)
 		assert.Nil(t, err)
 		assert.Equal(t, created.Languages, languages)
+
+		t.Run("find by", func(t *testing.T) {
+			found, err := userRepository.FindBy(ctx, "Language", languagesCreated[1])
+			assert.Nil(t, err)
+
+			assert.Equal(t, 1, len(found))
+			assert.Equal(t, created.ID, found[0].ID)
+			assert.Equal(t, created.Name, found[0].Name)
+
+			languages, err := data.LazyLoadNow[[]Language]("Languages", &found[0])
+			assert.Nil(t, err)
+			assert.Equal(t, created.Languages, languages)
+		})
 	})
 
 	t.Run("update field", func(t *testing.T) {

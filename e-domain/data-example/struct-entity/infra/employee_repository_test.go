@@ -47,11 +47,11 @@ func TestEmployeeRepository(t *testing.T) {
 
 	productRepository := infra.NewProductRepository(
 		data.NewDtoWrapRepository[infra.Product, domain.Product, uint](productGormRepository),
-		data.NewDtoWrapBelongToRepository[infra.Product, domain.Product, infra.Company, domain.Company](
-			data.NewGormBelongToRepository[infra.Product, infra.Company, uint](productGormRepository),
+		data.NewDtoWrapFindByRepository[infra.Product, domain.Product, infra.Company, domain.Company](
+			data.NewGormFindByRepository[infra.Product, infra.Company, uint](productGormRepository),
 		),
-		data.NewDtoWrapBelongToRepository[infra.Product, domain.Product, infra.Category, domain.Category](
-			data.NewGormBelongToRepository[infra.Product, infra.Category, uint](productGormRepository),
+		data.NewDtoWrapFindByRepository[infra.Product, domain.Product, infra.Category, domain.Category](
+			data.NewGormFindByRepository[infra.Product, infra.Category, uint](productGormRepository),
 		),
 	)
 
@@ -59,11 +59,11 @@ func TestEmployeeRepository(t *testing.T) {
 	employeeGormRepository := data.NewGormRepository[infra.Employee, uint](db)
 	employeeRepository := infra.NewEmployeeRepository(
 		data.NewDtoWrapRepository[infra.Employee, domain.Employee, uint](employeeGormRepository),
-		data.NewDtoWrapBelongToRepository[infra.Employee, domain.Employee, infra.Company, domain.Company](
-			data.NewGormBelongToRepository[infra.Employee, infra.Company, uint](employeeGormRepository),
+		data.NewDtoWrapFindByRepository[infra.Employee, domain.Employee, infra.Company, domain.Company](
+			data.NewGormFindByRepository[infra.Employee, infra.Company, uint](employeeGormRepository),
 		),
-		data.NewDtoWrapBelongToRepository[infra.Employee, domain.Employee, infra.Department, domain.Department](
-			data.NewGormBelongToRepository[infra.Employee, infra.Department, uint](employeeGormRepository),
+		data.NewDtoWrapFindByRepository[infra.Employee, domain.Employee, infra.Department, domain.Department](
+			data.NewGormFindByRepository[infra.Employee, infra.Department, uint](employeeGormRepository),
 		),
 	)
 
@@ -179,7 +179,34 @@ func TestEmployeeRepository(t *testing.T) {
 
 			languages := employees[0].Languages.Get()
 			assert.Equal(t, 1, len(languages))
+		})
+		t.Run("find-by-department", func(t *testing.T) {
+			employees, err := employeeRepository.FindByDepartment(ctx, storageDevPart)
+			assert.Nil(t, err)
+			assert.Equal(t, 1, len(employees))
+			assert.Equal(t, reuben.ID, employees[0].ID)
 
+			employee := employees[0]
+			company := employee.Company.Get()
+			assert.Equal(t, kakaoEnterprise, company)
+			manages := employee.Manages.Get()
+			assert.Equal(t, 1, len(manages))
+			for _, v := range manages {
+				category := v.Category.Get()
+				assert.NotEmpty(t, category)
+				company := v.Company.Get()
+				assert.NotEmpty(t, company)
+			}
+
+			departments := employee.Departments.Get()
+			assert.Equal(t, 1, len(departments))
+			assert.Equal(t, kakaoEnterprise, departments[0].Company.Get())
+			upperDepartment := departments[0].Upper.Get()
+			assert.Equal(t, cloudDevTeam.ID, upperDepartment.ID)
+			assert.Equal(t, cloudDevTeam.Name, upperDepartment.Name)
+
+			languages := employees[0].Languages.Get()
+			assert.Equal(t, 1, len(languages))
 		})
 	})
 

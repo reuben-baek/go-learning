@@ -8,7 +8,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
-	"strings"
 )
 
 type LazyLoadable interface {
@@ -145,6 +144,93 @@ func (u *GormRepository[T, ID]) findByForeignKey(ctx context.Context, ptrToSlice
 	return reflect.Indirect(reflect.ValueOf(ptrToSlice)).Interface(), nil
 }
 
+func (u *GormRepository[T, ID]) findWithChildTable(ctx context.Context, ptrToSlice any, associationName string, foreignKey string, foreignKeyValue any) (any, error) {
+	ptrToElement := ptrToEmptyElementOfPtrToSlice(ptrToSlice)
+	joinQuery, whereQuery := buildQueryForFindWithChildTable(ptrToElement, associationName, foreignKey)
+
+	// select * from users left join credit_cards on users.id = credit_cards.user_id where credit_cards.id = 1
+	if err := u.db.Model(ptrToSlice).Joins(joinQuery).Where(whereQuery, foreignKeyValue).Find(ptrToSlice).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NotFoundError
+		} else {
+			return nil, err
+		}
+	}
+
+	// for each element, set lazy loader
+	elementValues := reflect.ValueOf(ptrToSlice).Elem()
+	for i := 0; i < elementValues.Len(); i++ {
+		value := elementValues.Index(i)
+		id := value.FieldByName("ID").Interface()
+		u.setLazyLoader(ctx, value.Addr().Interface(), id)
+	}
+
+	return reflect.Indirect(reflect.ValueOf(ptrToSlice)).Interface(), nil
+}
+
+func buildQueryForFindWithChildTable(ptrToElement any, associationName string, foreignKey string) (string, string) {
+	elementType := reflect.TypeOf(ptrToElement).Elem().Name()
+	elementTable := fmt.Sprintf("%ss", toSnakeCase(elementType))
+	childTable := toSnakeCase(associationName)
+	joinQuery := fmt.Sprintf("left join %s on %s.id = %s.%s", childTable, elementTable, childTable, foreignKey)
+	whereQuery := fmt.Sprintf("%s.id = ?", childTable)
+	return joinQuery, whereQuery
+}
+
+func (u *GormRepository[T, ID]) findWithJoinTable(ctx context.Context, ptrToSlice any, associationName string, foreignKey string, foreignKeyValue any) (any, error) {
+	ptrToElement := ptrToEmptyElementOfPtrToSlice(ptrToSlice)
+	joinQuery, whereQuery := buildQueryForFindWithJoinTable(ptrToElement, associationName, foreignKey)
+
+	// select * from users left join user_languages on users.id = user_languages.user_id where user_languages.language_id = 1
+	if err := u.db.Model(ptrToSlice).Joins(joinQuery).Where(whereQuery, foreignKeyValue).Find(ptrToSlice).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NotFoundError
+		} else {
+			return nil, err
+		}
+	}
+
+	// for each element, set lazy loader
+	elementValues := reflect.ValueOf(ptrToSlice).Elem()
+	for i := 0; i < elementValues.Len(); i++ {
+		value := elementValues.Index(i)
+		id := value.FieldByName("ID").Interface()
+		u.setLazyLoader(ctx, value.Addr().Interface(), id)
+	}
+
+	return reflect.Indirect(reflect.ValueOf(ptrToSlice)).Interface(), nil
+}
+
+func buildQueryForFindWithJoinTable(ptrToElement any, associationName string, foreignKey string) (string, string) {
+	elementType := reflect.TypeOf(ptrToElement).Elem().Name()
+	elementTable := toSnakeCase(elementType + "s")
+	joinTable := fmt.Sprintf("%s_%s", toSnakeCase(elementType), toSnakeCase(associationName))
+	elementForeignKey := fmt.Sprintf("%s_id", toSnakeCase(elementType))
+	joinQuery := fmt.Sprintf("left join %s on %s.id = %s.%s", joinTable, elementTable, joinTable, elementForeignKey)
+	whereQuery := fmt.Sprintf("%s.%s = ?", joinTable, foreignKey)
+	return joinQuery, whereQuery
+}
+
+func (u *GormRepository[T, ID]) findAssociationsByForeignKey(ctx context.Context, ptrToParent any, ptrToChildren any, associationName string, foreignKey string, foreignKeyValue any) (any, error) {
+	db := u.db.Model(ptrToParent).Association(associationName)
+
+	if err := db.Find(ptrToChildren, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NotFoundError
+		} else {
+			return nil, err
+		}
+	}
+
+	// for each element, set lazy loader
+	elementValues := reflect.ValueOf(ptrToChildren).Elem()
+	for i := 0; i < elementValues.Len(); i++ {
+		u.setLazyLoader(ctx, elementValues.Index(i).Addr().Interface(), foreignKeyValue)
+	}
+
+	return reflect.Indirect(reflect.ValueOf(ptrToChildren)).Interface(), nil
+}
+
 func (u *GormRepository[T, ID]) setLazyLoader(ctx context.Context, ptrToEntity any, id any) any {
 	associations := findAssociations(ptrToEntity)
 
@@ -197,20 +283,45 @@ func (u *GormRepository[T, ID]) FindOne(ctx context.Context, id ID) (T, error) {
 	}
 }
 
-func (u *GormRepository[T, ID]) FindBy(ctx context.Context, belongTo any) ([]T, error) {
+func (u *GormRepository[T, ID]) FindBy(ctx context.Context, name string, byEntity any) ([]T, error) {
+	var entity T
 	var entities []T
 
-	belongToTable := reflect.TypeOf(belongTo).Name()
-	if foreignKeyValue, zero := findID[any, any](belongTo); zero {
-		panic(fmt.Sprintf("FindBy: %s's ID field is empty", belongToTable))
-	} else {
-		foreignKey := fmt.Sprintf("%s_id", strings.ToLower(belongToTable))
-		if found, err := u.findByForeignKey(ctx, &entities, foreignKey, foreignKeyValue); err != nil {
-			return entities, err
-		} else {
-			return found.([]T), nil
+	byEntityName := name
+	byAssName := byEntityName + "s"
+	associations := findAssociations(entity)
+	foreignKeyValue, zero := findID[any, any](byEntity)
+	if zero {
+		panic(fmt.Sprintf("FindBy: %s's ID field is empty", byEntityName))
+	}
+
+	for _, ass := range associations {
+		if ass.Name == byEntityName || ass.Name == byAssName {
+			switch ass.Type {
+			case BelongTo:
+				foreignKey := fmt.Sprintf("%s_id", toSnakeCase(byEntityName))
+				if found, err := u.findByForeignKey(ctx, &entities, foreignKey, foreignKeyValue); err != nil {
+					return entities, err
+				} else {
+					return found.([]T), nil
+				}
+			case HasOne, HasMany:
+				if found, err := u.findWithChildTable(ctx, &entities, byAssName, ass.ForeignKey, foreignKeyValue); err != nil {
+					return entities, err
+				} else {
+					return found.([]T), nil
+				}
+			case ManyToMany:
+				foreignKey := fmt.Sprintf("%s_id", toSnakeCase(byEntityName))
+				if found, err := u.findWithJoinTable(ctx, &entities, ass.Name, foreignKey, foreignKeyValue); err != nil {
+					return entities, err
+				} else {
+					return found.([]T), nil
+				}
+			}
 		}
 	}
+	return nil, fmt.Errorf("%T has no association with %T", entity, byEntity)
 }
 
 func (u *GormRepository[T, ID]) Create(ctx context.Context, entity T) (T, error) {
@@ -366,45 +477,25 @@ func (u *GormRepository[T, ID]) GetLazyLoadFuncOfHasMany(ctx context.Context, pt
 }
 
 // GetLazyLoadFuncOfManyMany returns slice of entity returning function
-func (u *GormRepository[T, ID]) GetLazyLoadFuncOfManyMany(ctx context.Context, ptrToParent any, ptrToChild any, associationName string, foreignKey string, foreignKeyValue any) func() (any, error) {
-	logrus.Debugf("GormRepository.GetLazyLoadFuncOfManyMany: entity [%p] [%+v] foreignKey[%s:%v]", ptrToChild, ptrToChild, foreignKey, foreignKeyValue)
+func (u *GormRepository[T, ID]) GetLazyLoadFuncOfManyMany(ctx context.Context, ptrToParent any, ptrToChildren any, associationName string, foreignKey string, foreignKeyValue any) func() (any, error) {
+	logrus.Debugf("GormRepository.GetLazyLoadFuncOfManyMany: entity [%p] [%+v] foreignKey[%s:%v]", ptrToChildren, ptrToChildren, foreignKey, foreignKeyValue)
 	return func() (any, error) {
 		var err error
-		if ptrToChild, err = u.findAssociationsByForeignKey(ctx, ptrToParent, ptrToChild, associationName, foreignKey, foreignKeyValue); err != nil {
+		if ptrToChildren, err = u.findAssociationsByForeignKey(ctx, ptrToParent, ptrToChildren, associationName, foreignKey, foreignKeyValue); err != nil {
 			return nil, err
 		}
-		return ptrToChild, nil
+		return ptrToChildren, nil
 	}
 }
 
-func (u *GormRepository[T, ID]) findAssociationsByForeignKey(ctx context.Context, ptrToParent any, ptrToChild any, associationName string, foreignKey string, foreignKeyValue any) (any, error) {
-	db := u.db.Model(ptrToParent).Association(associationName)
-
-	if err := db.Find(ptrToChild, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, NotFoundError
-		} else {
-			return nil, err
-		}
-	}
-
-	// for each element, set lazy loader
-	elementValues := reflect.ValueOf(ptrToChild).Elem()
-	for i := 0; i < elementValues.Len(); i++ {
-		u.setLazyLoader(ctx, elementValues.Index(i).Addr().Interface(), foreignKeyValue)
-	}
-
-	return reflect.Indirect(reflect.ValueOf(ptrToChild)).Interface(), nil
-}
-
-type GormBelongToRepository[T any, S any, ID comparable] struct {
+type GormFindByRepository[T any, S any, ID comparable] struct {
 	*GormRepository[T, ID]
 }
 
-func NewGormBelongToRepository[T any, S any, ID comparable](gormRepository *GormRepository[T, ID]) *GormBelongToRepository[T, S, ID] {
-	return &GormBelongToRepository[T, S, ID]{GormRepository: gormRepository}
+func NewGormFindByRepository[T any, S any, ID comparable](gormRepository *GormRepository[T, ID]) *GormFindByRepository[T, S, ID] {
+	return &GormFindByRepository[T, S, ID]{GormRepository: gormRepository}
 }
 
-func (u *GormBelongToRepository[T, S, ID]) FindBy(ctx context.Context, belongTo S) ([]T, error) {
-	return u.GormRepository.FindBy(ctx, belongTo)
+func (u *GormFindByRepository[T, S, ID]) FindBy(ctx context.Context, name string, byEntity S) ([]T, error) {
+	return u.GormRepository.FindBy(ctx, name, byEntity)
 }

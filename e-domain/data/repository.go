@@ -9,6 +9,6 @@ type Repository[T any, ID comparable] interface {
 	Delete(ctx context.Context, entity T) error
 }
 
-type BelongToRepository[T any, S any] interface {
-	FindBy(ctx context.Context, belongTo S) ([]T, error)
+type FindByRepository[T any, S any] interface {
+	FindBy(ctx context.Context, name string, byEntity S) ([]T, error)
 }

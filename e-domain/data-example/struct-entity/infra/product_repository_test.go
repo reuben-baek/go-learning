@@ -40,11 +40,11 @@ func TestProductRepository(t *testing.T) {
 
 	productRepository := infra.NewProductRepository(
 		data.NewDtoWrapRepository[infra.Product, domain.Product, uint](productGormRepository),
-		data.NewDtoWrapBelongToRepository[infra.Product, domain.Product, infra.Company, domain.Company](
-			data.NewGormBelongToRepository[infra.Product, infra.Company, uint](productGormRepository),
+		data.NewDtoWrapFindByRepository[infra.Product, domain.Product, infra.Company, domain.Company](
+			data.NewGormFindByRepository[infra.Product, infra.Company, uint](productGormRepository),
 		),
-		data.NewDtoWrapBelongToRepository[infra.Product, domain.Product, infra.Category, domain.Category](
-			data.NewGormBelongToRepository[infra.Product, infra.Category, uint](productGormRepository),
+		data.NewDtoWrapFindByRepository[infra.Product, domain.Product, infra.Category, domain.Category](
+			data.NewGormFindByRepository[infra.Product, infra.Category, uint](productGormRepository),
 		),
 	)
 
