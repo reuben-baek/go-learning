@@ -78,5 +78,5 @@ type LanguageRepository interface {
 
 type DepartmentRepository interface {
 	data.Repository[Department, uint]
-	//FindByUpperDepartment(ctx context.Context, upper Department) ([]Department, error)
+	FindByUpper(ctx context.Context, upper Department) ([]Department, error)
 }

@@ -55,7 +55,12 @@ func TestEmployeeRepository(t *testing.T) {
 		),
 	)
 
-	departmentRepository := infra.NewDepartmentRepository(data.NewDtoWrapRepository[infra.Department, domain.Department, uint](departmentGormRepository))
+	departmentRepository := infra.NewDepartmentRepository(
+		data.NewDtoWrapRepository[infra.Department, domain.Department, uint](departmentGormRepository),
+		data.NewDtoWrapFindByRepository[infra.Department, domain.Department, infra.Department, domain.Department](
+			data.NewGormFindByRepository[infra.Department, infra.Department, uint](departmentGormRepository),
+		),
+	)
 	employeeGormRepository := data.NewGormRepository[infra.Employee, uint](db)
 	employeeRepository := infra.NewEmployeeRepository(
 		data.NewDtoWrapRepository[infra.Employee, domain.Employee, uint](employeeGormRepository),

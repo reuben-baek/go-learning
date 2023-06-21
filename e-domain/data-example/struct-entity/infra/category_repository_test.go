@@ -30,7 +30,7 @@ func TestCategoryRepository(t *testing.T) {
 	db.AutoMigrate(&infra.Category{})
 
 	categoryGormRepository := data.NewGormRepository[infra.Category, uint](db)
-	categoryRepository := data.NewDtoWrapRepository[infra.Category, domain.Category, uint](categoryGormRepository)
+	categoryRepository := infra.NewCategoryRepository(data.NewDtoWrapRepository[infra.Category, domain.Category, uint](categoryGormRepository))
 
 	t.Run("create & find", func(t *testing.T) {
 		ctx := context.Background()

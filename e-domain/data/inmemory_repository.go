@@ -10,7 +10,7 @@ func NewInMemoryRepository[T any, ID comparable]() *InMemoryRepository[T, ID] {
 	return &InMemoryRepository[T, ID]{database: make(map[ID]T)}
 }
 
-func (u *InMemoryRepository[T, ID]) FindBy(ctx context.Context, belongTo any) ([]T, error) {
+func (u *InMemoryRepository[T, ID]) FindBy(ctx context.Context, name string, byEntity any) ([]T, error) {
 	//TODO implement me
 	panic("implement me")
 }
