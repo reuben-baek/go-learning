@@ -11,17 +11,34 @@ import (
 )
 
 type GormRepository[T any, ID comparable] struct {
-	db *gorm.DB
+	transactionManager TransactionManager
 }
 
-func NewGormRepository[T any, ID comparable](db *gorm.DB) *GormRepository[T, ID] {
-	return &GormRepository[T, ID]{db: db}
+func NewGormRepository[T any, ID comparable](transactionManager TransactionManager) *GormRepository[T, ID] {
+	return &GormRepository[T, ID]{transactionManager: transactionManager}
+}
+
+func (u *GormRepository[T, ID]) getGormDB(ctx context.Context) *gorm.DB {
+	db, ok := u.transactionManager.Get(ctx).(*gorm.DB)
+	if !ok {
+		panic("GormRepository.findOne: fail to get *gorm.DB")
+	}
+	return db
 }
 
 // findOne returns entity
 func (u *GormRepository[T, ID]) findOne(ctx context.Context, ptrToEntity any, id any) (any, error) {
-	db := u.preload(u.db, ptrToEntity)
+	db := u.getGormDB(ctx)
+	db = u.preload(db, ptrToEntity)
 	if err := db.First(ptrToEntity, "id = ?", id).Error; err != nil {
+		if logrus.IsLevelEnabled(logrus.DebugLevel) {
+			var idd any
+			if id != nil {
+				idd = reflect.Indirect(reflect.ValueOf(id))
+			}
+			entityName := reflect.TypeOf(ptrToEntity).Elem().Name()
+			logrus.Debugf("GormRepository.findOne: fail to find id[%v] in %s", idd, entityName)
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, NotFoundError
 		} else {
@@ -36,7 +53,8 @@ func (u *GormRepository[T, ID]) findOne(ctx context.Context, ptrToEntity any, id
 
 // findOneByForeignKey returns ptrEoEntity
 func (u *GormRepository[T, ID]) findOneByForeignKey(ctx context.Context, ptrToEntity any, foreignKey string, id any) (any, error) {
-	db := u.preload(u.db, ptrToEntity)
+	db := u.getGormDB(ctx)
+	db = u.preload(db, ptrToEntity)
 	if err := db.Model(ptrToEntity).First(ptrToEntity, fmt.Sprintf("%s = ?", foreignKey), id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, NotFoundError
@@ -50,8 +68,9 @@ func (u *GormRepository[T, ID]) findOneByForeignKey(ctx context.Context, ptrToEn
 }
 
 func (u *GormRepository[T, ID]) findByForeignKey(ctx context.Context, ptrToSlice any, foreignKey string, id any) (any, error) {
+	db := u.getGormDB(ctx)
 	ptrToElement := ptrToEmptyElementOfPtrToSlice(ptrToSlice)
-	db := u.preload(u.db, ptrToElement)
+	db = u.preload(db, ptrToElement)
 
 	if err := db.Model(ptrToSlice).Find(ptrToSlice, fmt.Sprintf("%s = ?", foreignKey), id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -71,11 +90,12 @@ func (u *GormRepository[T, ID]) findByForeignKey(ctx context.Context, ptrToSlice
 }
 
 func (u *GormRepository[T, ID]) findWithChildTable(ctx context.Context, ptrToSlice any, associationName string, foreignKey string, foreignKeyValue any) (any, error) {
+	db := u.getGormDB(ctx)
 	ptrToElement := ptrToEmptyElementOfPtrToSlice(ptrToSlice)
 	joinQuery, whereQuery := buildQueryForFindWithChildTable(ptrToElement, associationName, foreignKey)
 
 	// select * from users left join credit_cards on users.id = credit_cards.user_id where credit_cards.id = 1
-	if err := u.db.Model(ptrToSlice).Joins(joinQuery).Where(whereQuery, foreignKeyValue).Find(ptrToSlice).Error; err != nil {
+	if err := db.Model(ptrToSlice).Joins(joinQuery).Where(whereQuery, foreignKeyValue).Find(ptrToSlice).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, NotFoundError
 		} else {
@@ -104,11 +124,12 @@ func buildQueryForFindWithChildTable(ptrToElement any, associationName string, f
 }
 
 func (u *GormRepository[T, ID]) findWithJoinTable(ctx context.Context, ptrToSlice any, associationName string, foreignKey string, foreignKeyValue any) (any, error) {
+	db := u.getGormDB(ctx)
 	ptrToElement := ptrToEmptyElementOfPtrToSlice(ptrToSlice)
 	joinQuery, whereQuery := buildQueryForFindWithJoinTable(ptrToElement, associationName, foreignKey)
 
 	// select * from users left join user_languages on users.id = user_languages.user_id where user_languages.language_id = 1
-	if err := u.db.Model(ptrToSlice).Joins(joinQuery).Where(whereQuery, foreignKeyValue).Find(ptrToSlice).Error; err != nil {
+	if err := db.Model(ptrToSlice).Joins(joinQuery).Where(whereQuery, foreignKeyValue).Find(ptrToSlice).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, NotFoundError
 		} else {
@@ -138,9 +159,10 @@ func buildQueryForFindWithJoinTable(ptrToElement any, associationName string, fo
 }
 
 func (u *GormRepository[T, ID]) findAssociationsByForeignKey(ctx context.Context, ptrToParent any, ptrToChildren any, associationName string, foreignKey string, foreignKeyValue any) (any, error) {
-	db := u.db.Model(ptrToParent).Association(associationName)
+	db := u.getGormDB(ctx)
+	association := db.Model(ptrToParent).Association(associationName)
 
-	if err := db.Find(ptrToChildren, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue); err != nil {
+	if err := association.Find(ptrToChildren, fmt.Sprintf("%s = ?", foreignKey), foreignKeyValue); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, NotFoundError
 		} else {
@@ -169,9 +191,7 @@ func (u *GormRepository[T, ID]) setLazyLoader(ctx context.Context, ptrToEntity a
 				switch v.Type {
 				case BelongTo:
 					logrus.Debugf("GormRepository.FindOne: SetLoadFunc belong-to entity [%p], association [%p], association_id [%v]", anyEntity, v.PtrToEntity, v.ID)
-					if v.ID != nil {
-						anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfBelongTo(ctx, v.PtrToEntity, v.ID))
-					}
+					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfBelongTo(ctx, v.PtrToEntity, v.ID))
 				case HasOne:
 					logrus.Debugf("GormRepository.FindOne: SetLoadFunc has-one entity [%p], association [%p], foreignKey [%s], foreignKeyValue [%v]", anyEntity, v.PtrToEntity, v.ForeignKey, id)
 					anyEntity.SetLoadFunc(v.Name, u.GetLazyLoadFuncOfHasOne(ctx, v.PtrToEntity, v.ForeignKey, id))
@@ -251,61 +271,116 @@ func (u *GormRepository[T, ID]) FindBy(ctx context.Context, name string, byEntit
 }
 
 func (u *GormRepository[T, ID]) Create(ctx context.Context, entity T) (T, error) {
+	db := u.getGormDB(ctx)
 	var created T
-	if err := u.db.Create(&entity).Error; err != nil {
+	if err := db.Create(&entity).Error; err != nil {
 		return created, err
 	}
+
+	var id any
+	var zero bool
+	if id, zero = findID[T, ID](entity); zero {
+		panic("entity.ID is missing")
+	}
 	created = entity
+	u.setLazyLoader(ctx, &created, id)
 	return created, nil
 }
 
 func (u *GormRepository[T, ID]) Update(ctx context.Context, entity T) (T, error) {
+	db := u.getGormDB(ctx)
 	var id any
 	var zero bool
-	var db *gorm.DB = u.db.Session(&gorm.Session{FullSaveAssociations: true})
 
 	if id, zero = findID[T, ID](entity); zero {
 		panic("entity.ID is missing")
 	}
 
+	updateTx := db.Model(&entity).Select("*").Omit("id")
 	update := entity
+	associations := findAssociations(&entity)
+
 	switch lazyLoader := any(&entity).(type) {
 	case LazyLoadable:
-		associations := findAssociations(&entity)
 		for _, association := range associations {
-			switch association.FetchMode {
-			case FetchLazyMode:
-				switch association.Type {
-				case BelongTo:
-					db = db.Omit(association.Name)
-				case HasOne, HasMany, ManyToMany:
-					if !reflect.ValueOf(entity).FieldByName(association.Name).IsZero() {
-						ass := u.db.Unscoped().Model(&entity).Association(association.Name)
-						if ass.Error != nil {
-							panic(ass.Error)
-						}
-						if err := ass.Unscoped().Clear(); err != nil {
-							panic(err)
-						}
-					} else if !lazyLoader.HasLoadFunc(association.Name) {
-						ass := u.db.Unscoped().Model(&entity).Association(association.Name)
-						if ass.Error != nil {
-							panic(ass.Error)
-						}
+			switch association.Type {
+			case BelongTo:
+				updateTx = updateTx.Omit(association.Name)
+			case HasOne, HasMany, ManyToMany:
+				associationValue := reflect.ValueOf(entity).FieldByName(association.Name)
+				if !lazyLoader.HasLoadFunc(association.Name) {
+					ass := db.Unscoped().Model(&entity).Association(association.Name)
+					if ass.Error != nil {
+						panic(ass.Error)
+					}
+					if associationValue.IsZero() {
 						if err := ass.Unscoped().Clear(); err != nil {
 							panic(err)
 						}
 					} else {
-						db = db.Omit(association.Name)
+						if association.Type == HasOne {
+							value := associationValue.Interface()
+							if err := ass.Unscoped().Replace(&value); err != nil {
+								panic(err)
+							}
+						} else {
+							if err := ass.Unscoped().Replace(associationValue.Interface()); err != nil {
+								panic(err)
+							}
+						}
+					}
+				} else {
+					if !associationValue.IsZero() {
+						ass := db.Unscoped().Model(&entity).Association(association.Name)
+
+						if association.Type == HasOne {
+							value := associationValue.Interface()
+							if err := ass.Unscoped().Replace(&value); err != nil {
+								panic(err)
+							}
+						} else {
+							if err := ass.Unscoped().Replace(associationValue.Interface()); err != nil {
+								panic(err)
+							}
+						}
+					} else {
+						updateTx = updateTx.Omit(association.Name)
 					}
 				}
 			}
 		}
 	default:
-		u.clearAssociations(entity)
+		for _, association := range associations {
+			switch association.Type {
+			case BelongTo:
+				updateTx = updateTx.Omit(association.Name)
+			case HasOne, HasMany, ManyToMany:
+				associationValue := reflect.ValueOf(entity).FieldByName(association.Name)
+				ass := db.Unscoped().Model(&entity).Association(association.Name)
+				if ass.Error != nil {
+					panic(ass.Error)
+				}
+				if associationValue.IsZero() {
+					if err := ass.Unscoped().Clear(); err != nil {
+						panic(err)
+					}
+				} else {
+					if association.Type == HasOne {
+						value := associationValue.Interface()
+						if err := ass.Unscoped().Replace(&value); err != nil {
+							panic(err)
+						}
+					} else {
+						if err := ass.Unscoped().Replace(associationValue.Interface()); err != nil {
+							panic(err)
+						}
+					}
+				}
+			}
+		}
 	}
 
-	if err := db.Updates(&update).Error; err != nil {
+	if err := updateTx.Updates(&update).Error; err != nil {
 		return entity, err
 	}
 
@@ -317,14 +392,15 @@ func (u *GormRepository[T, ID]) Update(ctx context.Context, entity T) (T, error)
 	}
 }
 
-func (u *GormRepository[T, ID]) clearAssociations(entity T) T {
+func (u *GormRepository[T, ID]) clearAssociations(ctx context.Context, entity T) T {
+	db := u.getGormDB(ctx)
 	var updated T
 
 	associations := findAssociations(&entity)
 	updated = entity
 
 	for _, ass := range associations {
-		association := u.db.Unscoped().Model(&updated).Association(ass.Name)
+		association := db.Unscoped().Model(&updated).Association(ass.Name)
 		if association.Error != nil {
 			panic(association.Error)
 		}
@@ -349,11 +425,12 @@ func (u *GormRepository[T, ID]) clearAssociations(entity T) T {
 }
 
 func (u *GormRepository[T, ID]) Delete(ctx context.Context, entity T) error {
+	db := u.getGormDB(ctx)
 	if _, zero := findID[T, ID](entity); zero {
 		panic("entity.ID is missing")
 	}
-	u.clearAssociations(entity)
-	if err := u.db.Delete(&entity).Error; err != nil {
+	u.clearAssociations(ctx, entity)
+	if err := db.Delete(&entity).Error; err != nil {
 		return err
 	}
 	return nil
@@ -363,12 +440,12 @@ func (u *GormRepository[T, ID]) Delete(ctx context.Context, entity T) error {
 func (u *GormRepository[T, ID]) GetLazyLoadFuncOfBelongTo(ctx context.Context, ptrToEntity any, id any) func() (any, error) {
 	logrus.Debugf("GormRepository.GetLazyLoadFuncOfBelongTo: entity [%p] [%+v] id[%v]", ptrToEntity, ptrToEntity, id)
 	return func() (any, error) {
-		idValue := reflect.ValueOf(id)
-		if idValue.Type().Kind() == reflect.Pointer && idValue.IsNil() {
-			return nil, gorm.ErrRecordNotFound
+		if id == nil {
+			return nil, nil
 		}
+		idValue := reflect.ValueOf(id)
 		if idValue.IsZero() {
-			return nil, gorm.ErrRecordNotFound
+			return nil, nil
 		}
 		if found, err := u.findOne(ctx, ptrToEntity, id); err != nil {
 			return nil, err

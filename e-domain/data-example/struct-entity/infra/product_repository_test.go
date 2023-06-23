@@ -31,9 +31,10 @@ func TestProductRepository(t *testing.T) {
 	db.AutoMigrate(&infra.Company{})
 	db.AutoMigrate(&infra.Category{})
 
-	companyGormRepository := data.NewGormRepository[infra.Company, uint](db)
-	productGormRepository := data.NewGormRepository[infra.Product, uint](db)
-	categoryGormRepository := data.NewGormRepository[infra.Category, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	companyGormRepository := data.NewGormRepository[infra.Company, uint](transactionManager)
+	productGormRepository := data.NewGormRepository[infra.Product, uint](transactionManager)
+	categoryGormRepository := data.NewGormRepository[infra.Category, uint](transactionManager)
 
 	companyRepository := data.NewDtoWrapRepository[infra.Company, domain.Company, uint](companyGormRepository)
 	categoryRepository := data.NewDtoWrapRepository[infra.Category, domain.Category, uint](categoryGormRepository)

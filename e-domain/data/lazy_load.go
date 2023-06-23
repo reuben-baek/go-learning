@@ -56,9 +56,9 @@ func (l *LazyLoad[T]) Get() T {
 
 type LazyLoadable interface {
 	NewInstance()
-	SetLoadFunc(entity string, fn func() (any, error))
-	HasLoadFunc(entity string) bool
-	DeleteLoadFunc(entity string)
+	SetLoadFunc(name string, fn func() (any, error))
+	HasLoadFunc(name string) bool
+	DeleteLoadFunc(name string)
 	Load(name string, emptyEntity any) (any, error) // Load returns entity
 	Entities() []string
 }
@@ -109,7 +109,7 @@ func LazyLoadNow[T any](name string, lazyLoader LazyLoadable) (T, error) {
 	var err error
 	var loaded any
 	loaded, err = lazyLoader.Load(name, entity)
-	if err != nil {
+	if loaded == nil || err != nil {
 		return entity, err
 	}
 	valueOfParent := reflect.ValueOf(lazyLoader)

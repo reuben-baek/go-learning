@@ -1,13 +1,20 @@
 package data
 
-import "context"
+import (
+	"context"
+	"github.com/sirupsen/logrus"
+)
 
 type InMemoryRepository[T any, ID comparable] struct {
-	database map[ID]T
+	database           map[ID]T
+	transactionManager TransactionManager
 }
 
-func NewInMemoryRepository[T any, ID comparable]() *InMemoryRepository[T, ID] {
-	return &InMemoryRepository[T, ID]{database: make(map[ID]T)}
+func NewInMemoryRepository[T any, ID comparable](transactionManager TransactionManager) *InMemoryRepository[T, ID] {
+	return &InMemoryRepository[T, ID]{
+		database:           make(map[ID]T),
+		transactionManager: transactionManager,
+	}
 }
 
 func (u *InMemoryRepository[T, ID]) FindBy(ctx context.Context, name string, byEntity any) ([]T, error) {
@@ -26,6 +33,8 @@ func (u *InMemoryRepository[T, ID]) FindOne(ctx context.Context, id ID) (T, erro
 }
 
 func (u *InMemoryRepository[T, ID]) Create(ctx context.Context, entity T) (T, error) {
+	transaction := u.transactionManager.Get(ctx)
+	logrus.Infof("InMemoryRepository.Create: transaction [%v] entity [%+v]", transaction, entity)
 	id, _ := findID[T, ID](entity)
 	u.database[id] = entity
 	return entity, nil

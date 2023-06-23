@@ -34,8 +34,9 @@ func TestDepartmentRepository(t *testing.T) {
 	db.AutoMigrate(&infra.Company{})
 	db.AutoMigrate(&infra.Employee{})
 
-	companyGormRepository := data.NewGormRepository[infra.Company, uint](db)
-	departmentGormRepository := data.NewGormRepository[infra.Department, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	companyGormRepository := data.NewGormRepository[infra.Company, uint](transactionManager)
+	departmentGormRepository := data.NewGormRepository[infra.Department, uint](transactionManager)
 
 	companyRepository := data.NewDtoWrapRepository[infra.Company, domain.Company, uint](companyGormRepository)
 

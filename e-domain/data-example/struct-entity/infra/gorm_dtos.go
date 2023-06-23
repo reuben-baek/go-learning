@@ -36,8 +36,11 @@ func (c Category) To() domain.Category {
 		Name: c.Name,
 		Parent: data.LazyLoadFn[domain.Category](func() (any, error) {
 			if category, err := data.LazyLoadNow[*Category]("Parent", &c); err != nil {
-				return nil, err
+				panic(err)
 			} else {
+				if category == nil {
+					return domain.Category{}, nil
+				}
 				return category.To(), nil
 			}
 		}),
@@ -73,14 +76,14 @@ func (p Product) To() domain.Product {
 		Name: p.Name,
 		Company: data.LazyLoadFn[domain.Company](func() (any, error) {
 			if company, err := data.LazyLoadNow[Company]("Company", &p); err != nil {
-				return nil, err
+				panic(err)
 			} else {
 				return company.To(), nil
 			}
 		}),
 		Category: data.LazyLoadFn[domain.Category](func() (any, error) {
 			if category, err := data.LazyLoadNow[Category]("Category", &p); err != nil {
-				return nil, err
+				panic(err)
 			} else {
 				return category.To(), nil
 			}
@@ -113,21 +116,25 @@ func (d Department) To() domain.Department {
 		Name: d.Name,
 		Company: data.LazyLoadFn[domain.Company](func() (any, error) {
 			if company, err := data.LazyLoadNow[Company]("Company", &d); err != nil {
-				return nil, err
+				panic(err)
 			} else {
 				return company.To(), nil
 			}
 		}),
 		Upper: data.LazyLoadFn[domain.Department](func() (any, error) {
 			if upper, err := data.LazyLoadNow[*Department]("Upper", &d); err != nil {
-				return nil, err
+				panic(err)
 			} else {
-				return upper.To(), nil
+				if upper == nil {
+					return domain.Department{}, nil
+				} else {
+					return upper.To(), nil
+				}
 			}
 		}),
 		Manager: data.LazyLoadFn[domain.Employee](func() (any, error) {
 			if manager, err := data.LazyLoadNow[Employee]("Manager", &d); err != nil {
-				return nil, err
+				panic(err)
 			} else {
 				return manager.To(), nil
 			}
@@ -174,14 +181,14 @@ func (e Employee) To() domain.Employee {
 		Name: e.Name,
 		Company: data.LazyLoadFn[domain.Company](func() (any, error) {
 			if company, err := data.LazyLoadNow[Company]("Company", &e); err != nil {
-				return nil, err
+				panic(err)
 			} else {
 				return company.To(), nil
 			}
 		}),
 		Manages: data.LazyLoadFn[[]domain.Product](func() (any, error) {
 			if products, err := data.LazyLoadNow[[]Product]("Manages", &e); err != nil {
-				return nil, err
+				panic(err)
 			} else {
 				ps := make([]domain.Product, 0, len(products))
 				for _, p := range products {
@@ -193,7 +200,7 @@ func (e Employee) To() domain.Employee {
 		CreditCard: e.CreditCard.To(),
 		Departments: data.LazyLoadFn[[]domain.Department](func() (any, error) {
 			if departments, err := data.LazyLoadNow[[]Department]("Departments", &e); err != nil {
-				return nil, err
+				panic(err)
 			} else {
 				ps := make([]domain.Department, 0, len(departments))
 				for _, p := range departments {
@@ -204,7 +211,7 @@ func (e Employee) To() domain.Employee {
 		}),
 		Languages: data.LazyLoadFn[[]domain.Language](func() (any, error) {
 			if languages, err := data.LazyLoadNow[[]Language]("Languages", &e); err != nil {
-				return nil, err
+				panic(err)
 			} else {
 				ps := make([]domain.Language, 0, len(languages))
 				for _, p := range languages {

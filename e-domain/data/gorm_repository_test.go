@@ -93,8 +93,9 @@ func TestGormRepository_GetLazyLoadFn(t *testing.T) {
 	db.AutoMigrate(&Company{})
 	db.AutoMigrate(&LazyUser{})
 
-	companyRepository := data.NewGormRepository[Company, int](db)
-	userRepository := data.NewGormRepository[LazyUser, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	companyRepository := data.NewGormRepository[Company, int](transactionManager)
+	userRepository := data.NewGormRepository[LazyUser, uint](transactionManager)
 
 	ctx := context.Background()
 	kakaoEnterprise := Company{
@@ -123,7 +124,8 @@ func TestGormRepository_SelfRef_Lazy(t *testing.T) {
 	db := getGormDB()
 	db.AutoMigrate(&Category{})
 
-	categoryRepository := data.NewGormRepository[Category, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	categoryRepository := data.NewGormRepository[Category, uint](transactionManager)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -312,8 +314,9 @@ func TestGormRepository_BelongTo_Lazy(t *testing.T) {
 	db.AutoMigrate(&Company{})
 	db.AutoMigrate(&User{})
 
-	companyRepository := data.NewGormRepository[Company, int](db)
-	userRepository := data.NewGormRepository[User, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	companyRepository := data.NewGormRepository[Company, int](transactionManager)
+	userRepository := data.NewGormRepository[User, uint](transactionManager)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -513,8 +516,9 @@ func TestGormRepository_BelongTo_Eager(t *testing.T) {
 	db.AutoMigrate(&Company{})
 	db.AutoMigrate(&User{})
 
-	companyRepository := data.NewGormRepository[Company, int](db)
-	userRepository := data.NewGormRepository[User, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	companyRepository := data.NewGormRepository[Company, int](transactionManager)
+	userRepository := data.NewGormRepository[User, uint](transactionManager)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -601,14 +605,14 @@ func TestGormRepository_BelongTo_Eager(t *testing.T) {
 		created, _ := userRepository.Create(ctx, reuben)
 		found, _ := userRepository.FindOne(ctx, created.ID)
 
-		found.Company = kakaoCloudCreated
+		found.CompanyID = kakaoCloudCreated.ID
 		updated, err := userRepository.Update(ctx, found)
 
 		assert.Nil(t, err)
 		assert.Equal(t, found.ID, updated.ID)
 		assert.Equal(t, found.Name, updated.Name)
 		assert.Equal(t, updated.CompanyID, updated.Company.ID)
-		assert.Equal(t, found.Company, updated.Company)
+		assert.Equal(t, kakaoCloudCreated, updated.Company)
 
 		foundAfterUpdated, _ := userRepository.FindOne(ctx, created.ID)
 		assert.Equal(t, updated, foundAfterUpdated)
@@ -655,7 +659,8 @@ func TestGormRepository_HasOne_Lazy(t *testing.T) {
 	db.AutoMigrate(&User{})
 	db.AutoMigrate(&CreditCard{})
 
-	userRepository := data.NewGormRepository[User, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	userRepository := data.NewGormRepository[User, uint](transactionManager)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -832,7 +837,8 @@ func TestGormRepository_HasOne_Eager(t *testing.T) {
 	db.AutoMigrate(&User{})
 	db.AutoMigrate(&CreditCard{})
 
-	userRepository := data.NewGormRepository[User, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	userRepository := data.NewGormRepository[User, uint](transactionManager)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -954,7 +960,8 @@ func TestGormRepository_HasMany_Lazy(t *testing.T) {
 	db.AutoMigrate(&User{})
 	db.AutoMigrate(&CreditCard{})
 
-	userRepository := data.NewGormRepository[User, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	userRepository := data.NewGormRepository[User, uint](transactionManager)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -1165,7 +1172,8 @@ func TestGormRepository_HasMany_Eager(t *testing.T) {
 	db.AutoMigrate(&User{})
 	db.AutoMigrate(&CreditCard{})
 
-	userRepository := data.NewGormRepository[User, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	userRepository := data.NewGormRepository[User, uint](transactionManager)
 
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
@@ -1313,8 +1321,9 @@ func TestGormRepository_ManyToMany_Lazy(t *testing.T) {
 	db.AutoMigrate(&Language{})
 	db.AutoMigrate(&User{})
 
-	languageRepository := data.NewGormRepository[Language, uint](db)
-	userRepository := data.NewGormRepository[User, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	languageRepository := data.NewGormRepository[Language, uint](transactionManager)
+	userRepository := data.NewGormRepository[User, uint](transactionManager)
 
 	ctx := context.Background()
 
@@ -1505,8 +1514,9 @@ func TestGormRepository_ManyToMany_Eager(t *testing.T) {
 	db.AutoMigrate(&Language{})
 	db.AutoMigrate(&User{})
 
-	languageRepository := data.NewGormRepository[Language, uint](db)
-	userRepository := data.NewGormRepository[User, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	languageRepository := data.NewGormRepository[Language, uint](transactionManager)
+	userRepository := data.NewGormRepository[User, uint](transactionManager)
 
 	ctx := context.Background()
 

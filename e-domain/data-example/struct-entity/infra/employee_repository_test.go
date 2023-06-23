@@ -2,6 +2,8 @@ package infra_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"github.com/reuben-baek/go-learning/e-domain/data"
 	"github.com/reuben-baek/go-learning/e-domain/data-example/struct-entity/domain"
 	"github.com/reuben-baek/go-learning/e-domain/data-example/struct-entity/infra"
@@ -35,11 +37,12 @@ func TestEmployeeRepository(t *testing.T) {
 	db.AutoMigrate(&infra.Company{})
 	db.AutoMigrate(&infra.Employee{})
 
-	companyGormRepository := data.NewGormRepository[infra.Company, uint](db)
-	productGormRepository := data.NewGormRepository[infra.Product, uint](db)
-	categoryGormRepository := data.NewGormRepository[infra.Category, uint](db)
-	languageGormRepository := data.NewGormRepository[infra.Language, string](db)
-	departmentGormRepository := data.NewGormRepository[infra.Department, uint](db)
+	transactionManager := data.NewGormTransactionManager(db)
+	companyGormRepository := data.NewGormRepository[infra.Company, uint](transactionManager)
+	productGormRepository := data.NewGormRepository[infra.Product, uint](transactionManager)
+	categoryGormRepository := data.NewGormRepository[infra.Category, uint](transactionManager)
+	languageGormRepository := data.NewGormRepository[infra.Language, string](transactionManager)
+	departmentGormRepository := data.NewGormRepository[infra.Department, uint](transactionManager)
 
 	companyRepository := data.NewDtoWrapRepository[infra.Company, domain.Company, uint](companyGormRepository)
 	categoryRepository := data.NewDtoWrapRepository[infra.Category, domain.Category, uint](categoryGormRepository)
@@ -61,7 +64,7 @@ func TestEmployeeRepository(t *testing.T) {
 			data.NewGormFindByRepository[infra.Department, infra.Department, uint](departmentGormRepository),
 		),
 	)
-	employeeGormRepository := data.NewGormRepository[infra.Employee, uint](db)
+	employeeGormRepository := data.NewGormRepository[infra.Employee, uint](transactionManager)
 	employeeRepository := infra.NewEmployeeRepository(
 		data.NewDtoWrapRepository[infra.Employee, domain.Employee, uint](employeeGormRepository),
 		data.NewDtoWrapFindByRepository[infra.Employee, domain.Employee, infra.Company, domain.Company](
@@ -280,6 +283,111 @@ func TestEmployeeRepository(t *testing.T) {
 		assert.ErrorIs(t, data.NotFoundError, err)
 	})
 
+	t.Run("transaction", func(t *testing.T) {
+		t.Run("commit", func(t *testing.T) {
+			ctx := context.Background()
+			var reuben domain.Employee
+			err := transactionManager.Do(ctx, func(ctx context.Context) error {
+				var err error
+				reuben = domain.Employee{
+					Name:    "reuben.b",
+					Company: data.LazyLoadValue[domain.Company](kakaoEnterprise),
+					Manages: data.LazyLoadValue[[]domain.Product]([]domain.Product{objectstorage}),
+					CreditCard: domain.CreditCard{
+						Number: "111111111111",
+					},
+					Departments: data.LazyLoadValue[[]domain.Department]([]domain.Department{storageDevPart}),
+					Languages:   data.LazyLoadValue[[]domain.Language]([]domain.Language{korean}),
+				}
+				reuben, err = employeeRepository.Create(ctx, reuben)
+				return err
+			})
+			assert.Nil(t, err)
+			found, err := employeeRepository.FindOne(ctx, reuben.ID)
+			assert.Nil(t, err)
+			assert.Equal(t, reuben.ID, found.ID)
+		})
+		t.Run("rollback", func(t *testing.T) {
+			ctx := context.Background()
+			var reuben domain.Employee
+			err := transactionManager.Do(ctx, func(ctx context.Context) error {
+				reuben = domain.Employee{
+					Name:    "reuben.b",
+					Company: data.LazyLoadValue[domain.Company](kakaoEnterprise),
+					Manages: data.LazyLoadValue[[]domain.Product]([]domain.Product{objectstorage}),
+					CreditCard: domain.CreditCard{
+						Number: "111111111111",
+					},
+					Departments: data.LazyLoadValue[[]domain.Department]([]domain.Department{storageDevPart}),
+					Languages:   data.LazyLoadValue[[]domain.Language]([]domain.Language{korean}),
+				}
+				reuben, err = employeeRepository.Create(ctx, reuben)
+				return errors.New("internal error")
+			})
+			assert.NotNil(t, err)
+			found, err := employeeRepository.FindOne(ctx, reuben.ID)
+			assert.ErrorIs(t, data.NotFoundError, err)
+			assert.Empty(t, found.ID)
+		})
+		t.Run("lazy load in transaction scope", func(t *testing.T) {
+			ctx := context.Background()
+
+			var err error
+			reuben := domain.Employee{
+				Name:    "reuben.b",
+				Company: data.LazyLoadValue[domain.Company](kakaoEnterprise),
+				Manages: data.LazyLoadValue[[]domain.Product]([]domain.Product{objectstorage}),
+				CreditCard: domain.CreditCard{
+					Number: "111111111111",
+				},
+				Departments: data.LazyLoadValue[[]domain.Department]([]domain.Department{storageDevPart}),
+				Languages:   data.LazyLoadValue[[]domain.Language]([]domain.Language{korean}),
+			}
+			reuben, _ = employeeRepository.Create(ctx, reuben)
+
+			var found domain.Employee
+			var foundCompany domain.Company
+			err = transactionManager.Do(ctx, func(ctx context.Context) error {
+				found, err = employeeRepository.FindOne(ctx, reuben.ID)
+				foundCompany = found.Company.Get()
+				return err
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, reuben.ID, found.ID)
+			assert.Equal(t, kakaoEnterprise, foundCompany)
+		})
+		t.Run("lazy load out of transaction scope", func(t *testing.T) {
+			ctx := context.Background()
+
+			var err error
+			reuben := domain.Employee{
+				Name:    "reuben.b",
+				Company: data.LazyLoadValue[domain.Company](kakaoEnterprise),
+				Manages: data.LazyLoadValue[[]domain.Product]([]domain.Product{objectstorage}),
+				CreditCard: domain.CreditCard{
+					Number: "111111111111",
+				},
+				Departments: data.LazyLoadValue[[]domain.Department]([]domain.Department{storageDevPart}),
+				Languages:   data.LazyLoadValue[[]domain.Language]([]domain.Language{korean}),
+			}
+			reuben, _ = employeeRepository.Create(ctx, reuben)
+
+			var found domain.Employee
+			var foundCompany domain.Company
+			err = transactionManager.Do(ctx, func(ctx context.Context) error {
+				found, err = employeeRepository.FindOne(ctx, reuben.ID)
+				return err
+			})
+
+			assert.Nil(t, err)
+			assert.Equal(t, reuben.ID, found.ID)
+
+			assert.PanicsWithError(t, sql.ErrTxDone.Error(), func() {
+				foundCompany = found.Company.Get()
+				assert.Equal(t, kakaoEnterprise, foundCompany)
+			})
+		})
+	})
 }
 
 func init() {
