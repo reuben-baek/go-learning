@@ -245,6 +245,8 @@ func TestEmployeeRepository(t *testing.T) {
 			assert.NotEmpty(t, updated.CreditCard)
 			assert.Equal(t, 1, len(updated.Departments.Get()))
 			assert.Equal(t, 1, len(updated.Languages.Get()))
+
+			employeeRepository.Update(ctx, reuben)
 		})
 		t.Run("company", func(t *testing.T) {
 			found, _ := employeeRepository.FindOne(ctx, reuben.ID)
@@ -252,13 +254,33 @@ func TestEmployeeRepository(t *testing.T) {
 			updated, err := employeeRepository.Update(ctx, found)
 			assert.Nil(t, err)
 			assert.Equal(t, kakaoCloud, updated.Company.Get())
+			employeeRepository.Update(ctx, reuben)
 		})
 		t.Run("departments", func(t *testing.T) {
-			found, _ := employeeRepository.FindOne(ctx, reuben.ID)
-			found.Departments = data.LazyLoadValue[[]domain.Department]([]domain.Department{})
-			updated, err := employeeRepository.Update(ctx, found)
-			assert.Nil(t, err)
-			assert.Equal(t, 0, len(updated.Departments.Get()))
+			t.Run("0 slice", func(t *testing.T) {
+				found, _ := employeeRepository.FindOne(ctx, reuben.ID)
+				found.Departments = data.LazyLoadValue[[]domain.Department]([]domain.Department{})
+				updated, err := employeeRepository.Update(ctx, found)
+				assert.Nil(t, err)
+				assert.Equal(t, 0, len(updated.Departments.Get()))
+				employeeRepository.Update(ctx, reuben)
+			})
+			t.Run("nil", func(t *testing.T) {
+				found, _ := employeeRepository.FindOne(ctx, reuben.ID)
+				found.Departments = data.LazyLoadValue[[]domain.Department](nil)
+				updated, err := employeeRepository.Update(ctx, found)
+				assert.Nil(t, err)
+				assert.Equal(t, 0, len(updated.Departments.Get()))
+				employeeRepository.Update(ctx, reuben)
+			})
+			t.Run("update department", func(t *testing.T) {
+				found, _ := employeeRepository.FindOne(ctx, reuben.ID)
+				found.Departments = data.LazyLoadValue[[]domain.Department]([]domain.Department{cloudDevTeam})
+				updated, err := employeeRepository.Update(ctx, found)
+				assert.Nil(t, err)
+				assert.Equal(t, 1, len(updated.Departments.Get()))
+				employeeRepository.Update(ctx, reuben)
+			})
 		})
 	})
 

@@ -300,81 +300,28 @@ func (u *GormRepository[T, ID]) Update(ctx context.Context, entity T) (T, error)
 	update := entity
 	associations := findAssociations(&entity)
 
-	switch lazyLoader := any(&entity).(type) {
-	case LazyLoadable:
-		for _, association := range associations {
-			switch association.Type {
-			case BelongTo:
-				updateTx = updateTx.Omit(association.Name)
-			case HasOne, HasMany, ManyToMany:
-				associationValue := reflect.ValueOf(entity).FieldByName(association.Name)
-				if !lazyLoader.HasLoadFunc(association.Name) {
-					ass := db.Unscoped().Model(&entity).Association(association.Name)
-					if ass.Error != nil {
-						panic(ass.Error)
-					}
-					if associationValue.IsZero() {
-						if err := ass.Unscoped().Clear(); err != nil {
-							panic(err)
-						}
-					} else {
-						if association.Type == HasOne {
-							value := associationValue.Interface()
-							if err := ass.Unscoped().Replace(&value); err != nil {
-								panic(err)
-							}
-						} else {
-							if err := ass.Unscoped().Replace(associationValue.Interface()); err != nil {
-								panic(err)
-							}
-						}
-					}
-				} else {
-					if !associationValue.IsZero() {
-						ass := db.Unscoped().Model(&entity).Association(association.Name)
+	lazyLoader, _ := any(&entity).(LazyLoadable)
 
-						if association.Type == HasOne {
-							value := associationValue.Interface()
-							if err := ass.Unscoped().Replace(&value); err != nil {
-								panic(err)
-							}
-						} else {
-							if err := ass.Unscoped().Replace(associationValue.Interface()); err != nil {
-								panic(err)
-							}
-						}
-					} else {
-						updateTx = updateTx.Omit(association.Name)
-					}
-				}
+	for _, association := range associations {
+		updateTx = updateTx.Omit(association.Name)
+
+		switch association.Type {
+		case BelongTo:
+		case HasOne, HasMany, ManyToMany:
+			associationValue := reflect.ValueOf(entity).FieldByName(association.Name)
+			ass := db.Unscoped().Model(&entity).Association(association.Name)
+			if ass.Error != nil {
+				panic(ass.Error)
 			}
-		}
-	default:
-		for _, association := range associations {
-			switch association.Type {
-			case BelongTo:
-				updateTx = updateTx.Omit(association.Name)
-			case HasOne, HasMany, ManyToMany:
-				associationValue := reflect.ValueOf(entity).FieldByName(association.Name)
-				ass := db.Unscoped().Model(&entity).Association(association.Name)
-				if ass.Error != nil {
-					panic(ass.Error)
-				}
-				if associationValue.IsZero() {
-					if err := ass.Unscoped().Clear(); err != nil {
-						panic(err)
-					}
-				} else {
-					if association.Type == HasOne {
-						value := associationValue.Interface()
-						if err := ass.Unscoped().Replace(&value); err != nil {
-							panic(err)
-						}
-					} else {
-						if err := ass.Unscoped().Replace(associationValue.Interface()); err != nil {
-							panic(err)
-						}
-					}
+
+			if lazyLoader == nil || !lazyLoader.HasLoadFunc(association.Name) {
+				// already loaded or eager association
+				u.replaceAssociation(associationValue, ass, association)
+			} else {
+				// lazy association and not loaded. if zero, no updates.
+				if !associationValue.IsZero() {
+					// association value should be
+					u.replaceAssociation(associationValue, ass, association)
 				}
 			}
 		}
@@ -389,6 +336,25 @@ func (u *GormRepository[T, ID]) Update(ctx context.Context, entity T) (T, error)
 		return updated, err
 	} else {
 		return found.(T), err
+	}
+}
+
+func (u *GormRepository[T, ID]) replaceAssociation(associationValue reflect.Value, ass *gorm.Association, association Association) {
+	if associationValue.IsZero() {
+		if err := ass.Unscoped().Clear(); err != nil {
+			panic(err)
+		}
+	} else {
+		if association.Type == HasOne {
+			value := associationValue.Interface()
+			if err := ass.Unscoped().Replace(&value); err != nil {
+				panic(err)
+			}
+		} else {
+			if err := ass.Unscoped().Replace(associationValue.Interface()); err != nil {
+				panic(err)
+			}
+		}
 	}
 }
 

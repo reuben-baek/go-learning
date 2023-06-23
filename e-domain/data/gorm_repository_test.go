@@ -1075,7 +1075,7 @@ func TestGormRepository_HasMany_Lazy(t *testing.T) {
 			// rollback for next tests
 			userRepository.Update(ctx, reuben)
 		})
-		t.Run("hasMany field before lazy load - success", func(t *testing.T) {
+		t.Run("hasMany field before lazy load", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
 
 			found.CreditCards = []CreditCard{
@@ -1095,6 +1095,42 @@ func TestGormRepository_HasMany_Lazy(t *testing.T) {
 
 			// rollback for next tests
 			userRepository.Update(ctx, reuben)
+		})
+		t.Run("empty hasMany field before lazy load", func(t *testing.T) {
+			t.Run("nil hasMany field", func(t *testing.T) {
+				found, _ := userRepository.FindOne(ctx, reuben.ID)
+
+				found.CreditCards = nil
+
+				updated, err := userRepository.Update(ctx, found)
+				assert.Nil(t, err)
+				assert.Empty(t, updated.CreditCards)
+
+				creditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &updated)
+				assert.Nil(t, err)
+				assert.Equal(t, updated.CreditCards, creditCards)
+				assert.Equal(t, 2, len(updated.CreditCards))
+
+				// rollback for next tests
+				userRepository.Update(ctx, reuben)
+			})
+			t.Run("empty slice hasMany field", func(t *testing.T) {
+				found, _ := userRepository.FindOne(ctx, reuben.ID)
+
+				found.CreditCards = []CreditCard{}
+
+				updated, err := userRepository.Update(ctx, found)
+				assert.Nil(t, err)
+				assert.Empty(t, updated.CreditCards)
+
+				creditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &updated)
+				assert.Nil(t, err)
+				assert.Equal(t, updated.CreditCards, creditCards)
+				assert.Equal(t, 0, len(updated.CreditCards))
+
+				// rollback for next tests
+				userRepository.Update(ctx, reuben)
+			})
 		})
 		t.Run("hasMany field after lazy load - success", func(t *testing.T) {
 			found, _ := userRepository.FindOne(ctx, reuben.ID)
@@ -1117,6 +1153,44 @@ func TestGormRepository_HasMany_Lazy(t *testing.T) {
 
 			// rollback for next tests
 			userRepository.Update(ctx, reuben)
+		})
+		t.Run("empty hasMany field after lazy load", func(t *testing.T) {
+			t.Run("nil hasMany field", func(t *testing.T) {
+				found, _ := userRepository.FindOne(ctx, reuben.ID)
+				data.LazyLoadNow[[]CreditCard]("CreditCards", &found)
+
+				found.CreditCards = nil
+
+				updated, err := userRepository.Update(ctx, found)
+				assert.Nil(t, err)
+				assert.Empty(t, updated.CreditCards)
+
+				creditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &updated)
+				assert.Nil(t, err)
+				assert.Equal(t, updated.CreditCards, creditCards)
+				assert.Equal(t, 0, len(updated.CreditCards))
+
+				// rollback for next tests
+				userRepository.Update(ctx, reuben)
+			})
+			t.Run("empty slice hasMany field", func(t *testing.T) {
+				found, _ := userRepository.FindOne(ctx, reuben.ID)
+				data.LazyLoadNow[[]CreditCard]("CreditCards", &found)
+
+				found.CreditCards = []CreditCard{}
+
+				updated, err := userRepository.Update(ctx, found)
+				assert.Nil(t, err)
+				assert.Empty(t, updated.CreditCards)
+
+				creditCards, err := data.LazyLoadNow[[]CreditCard]("CreditCards", &updated)
+				assert.Nil(t, err)
+				assert.Equal(t, updated.CreditCards, creditCards)
+				assert.Equal(t, 0, len(updated.CreditCards))
+
+				// rollback for next tests
+				userRepository.Update(ctx, reuben)
+			})
 		})
 	})
 
